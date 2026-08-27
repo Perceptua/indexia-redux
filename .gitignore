@@ -1,0 +1,34 @@
+# Secrets — real environment values (template lives at docker/.env.example)
+docker/.env
+
+# TLS keystore — self-signed, regenerate via scripts/gen-cert.sh
+certs/
+
+# Runtime data (Docker bind mounts) — never commit the corpus or backups
+data/
+backups/
+
+# Generated startup digest — renders private note bodies, overwritten each startup
+recent/
+
+# Staging drop zone — dropped note files + processed/failed are private corpus content
+staging/*
+!staging/README.md
+!staging/scans/
+!staging/transcripts/
+
+# Scan inbox — private images of handwritten notes (+ processed/)
+staging/scans/*
+!staging/scans/README.md
+
+# Transcript inbox — private machine transcripts of audio notes (+ processed/)
+staging/transcripts/*
+!staging/transcripts/README.md
+
+# Python bytecode (scripts/ and tests/ both import the shared core)
+__pycache__/
+*.pyc
+
+# OS / editor noise
+.DS_Store
+Thumbs.db

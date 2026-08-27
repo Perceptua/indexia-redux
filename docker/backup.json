@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "enabled": true,
+  "backupDirectory": "./backups",
+  "defaults": {
+    "enabled": false
+  },
+  "databases": {
+    "indexia": {
+      "enabled": true,
+      "schedule": { "type": "cron", "expression": "0 0 2 * * ?" },
+      "retention": { "maxFiles": 14 }
+    }
+  }
+}

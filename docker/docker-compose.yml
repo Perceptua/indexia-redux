@@ -1,0 +1,37 @@
+# Indexia — containerized ArcadeDB server (v1 runtime).
+# Local-first, single-user, loopback-only, TLS on. See docs/spec.md §9/§12 and
+# the plan at .claude/plans/read-through-the-spec-dazzling-torvalds.md.
+#
+# Secrets come from ./.env (gitignored). Copy .env.example → .env first.
+# Bind-mount dirs (../data, ../backups, ../certs) are created by scripts/up.sh
+# (or `mkdir` them) before first boot, and ../certs must contain keystore.p12.
+name: indexia
+
+services:
+  arcadedb:
+    image: arcadedata/arcadedb:26.7.3          # pinned to current stable (bump deliberately; :latest is a SNAPSHOT)
+    container_name: indexia-arcadedb
+    restart: on-failure                         # on-demand: recover crashes, no auto-start on host boot
+    environment:
+      JAVA_OPTS: >-
+        -Xms${ARCADEDB_HEAP:-1G} -Xmx${ARCADEDB_HEAP:-1G}
+        -Darcadedb.server.rootPassword=${ARCADEDB_ROOT_PASSWORD}
+        -Darcadedb.ssl.enabled=true
+        -Darcadedb.ssl.keyStore=/home/arcadedb/certs/keystore.p12
+        -Darcadedb.ssl.keyStorePassword=${ARCADEDB_KEYSTORE_PASSWORD}
+        -Darcadedb.ssl.trustStore=/home/arcadedb/certs/keystore.p12
+        -Darcadedb.ssl.trustStorePassword=${ARCADEDB_KEYSTORE_PASSWORD}
+        -Darcadedb.server.httpsIncomingPort=2480
+        -Darcadedb.server.httpIncomingPort=2481
+        -Darcadedb.server.backupDirectory=/home/arcadedb/backups
+    ports:
+      - "127.0.0.1:${INDEXIA_HTTP_PORT:-2480}:2480"     # HTTPS API + Studio — loopback only
+      - "127.0.0.1:${INDEXIA_BINARY_PORT:-2424}:2424"   # binary protocol   — loopback only
+    volumes:
+      - ../data:/home/arcadedb/databases        # corpus persistence
+      - ../backups:/home/arcadedb/backups       # BACKUP DATABASE output
+      - ../certs:/home/arcadedb/certs:ro        # dedicated dir; does NOT shadow the image's /config
+      - ./backup.json:/home/arcadedb/config/backup.json:ro   # enables the built-in AutoBackupSchedulerPlugin
+
+# Scheduled backups are handled by ArcadeDB's built-in AutoBackupSchedulerPlugin, configured
+# in docker/backup.json (auto-detected at startup). No sidecar container needed.

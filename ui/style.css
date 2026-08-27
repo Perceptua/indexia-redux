@@ -1,0 +1,415 @@
+/* indexia graph UI — chrome only. The graph's own colours live in ui/graph.js, because
+   Cytoscape styles in JS; the two palettes are kept in step by role name, not by hex.
+
+   Both modes are selected, not flipped: the dark values are their own steps against the dark
+   surface. Categorical hues are the first three slots of the validated palette — the only three
+   that clear the all-pairs separation gates in both modes, which is the gate that applies here
+   because any two communities can end up side by side on a canvas. Everything past the third
+   community is "other" grey; the legend and the detail panel carry its identity instead. */
+
+:root {
+  color-scheme: light;
+  --plane:      #f9f9f7;
+  --surface:    #fcfcfb;
+  --ink:        #0b0b0b;
+  --ink-2:      #52514e;
+  --muted:      #898781;
+  --rule:       #e1e0d9;
+  --edge:       #c3c2b7;
+  --border:     rgba(11, 11, 11, 0.10);
+  --hover:      rgba(11, 11, 11, 0.05);
+  --series-1:   #2a78d6;
+  --series-2:   #eb6834;
+  --series-3:   #1baf7a;
+  --other:      #898781;
+  --good:       #0ca30c;
+  --critical:   #d03b3b;
+  --pending:    #b8860b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plane:    #0d0d0d;
+    --surface:  #1a1a19;
+    --ink:      #ffffff;
+    --ink-2:    #c3c2b7;
+    --muted:    #898781;
+    --rule:     #2c2c2a;
+    --edge:     #383835;
+    --border:   rgba(255, 255, 255, 0.10);
+    --hover:    rgba(255, 255, 255, 0.06);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* ---- top bar ------------------------------------------------------------- */
+#bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--plane);
+}
+.brand { font-weight: 600; letter-spacing: 0.02em; }
+.grow { flex: 1; }
+.muted { color: var(--muted); }
+#corpus { font-variant-numeric: tabular-nums; }
+
+button, select {
+  font: inherit;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+button:hover, select:hover { background: var(--hover); color: var(--ink); }
+button.on { color: var(--ink); border-color: var(--muted); font-weight: 600; }
+
+/* The walk button, and the only place in this chrome where colour carries state. It never carries
+   it alone: the label says what pressing does ("walk" / "save walk · N"), `aria-pressed` says
+   whether the mode is on, and `disabled` is its own channel — so the three states survive both a
+   screen reader and a reader who cannot separate the two hues. Outlined rather than filled,
+   matching .pill.good / .pill.critical, because the header is quiet and a recording indicator
+   that shouts is one you stop seeing. */
+#walk { font-variant-numeric: tabular-nums; }
+#walk[disabled] { opacity: 0.45; cursor: default; }
+#walk[disabled]:hover { background: var(--surface); color: var(--ink-2); }
+#walk.armed { border-color: var(--good); color: var(--good); }
+#walk.walking { border-color: var(--critical); color: var(--critical); font-weight: 600; }
+
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; margin-left: -1px; }
+.seg button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 4px 4px 0; }
+.seg.wide { display: flex; width: 100%; }
+.seg.wide button { flex: 1; text-align: center; }
+
+/* ---- resizable body --------------------------------------------------------
+   Five tracks, not three: a resizer is its own grid column (ui/app.js wires
+   #filters-resizer / #panel-resizer), not an overlay, so its hit area always lines up with
+   where the pointer expects it. --filters-width and --panel-width are the only things app.js
+   ever sets on this element; collapsing #filters or closing #panel is just driving those (and
+   their matching *-handle track) to 0, so there is one rule here for every combination of the
+   two instead of one per state. */
+main {
+  display: grid;
+  grid-template-columns:
+    var(--filters-width, 232px) var(--filters-handle, 6px) minmax(0, 1fr)
+    var(--panel-handle, 0px) var(--panel-width, 0px);
+  height: calc(100% - 44px);
+  transition: grid-template-columns 140ms ease;
+}
+/* Set for the duration of a drag only (ui/app.js): mid-drag, the 140ms above would lag the
+   pointer and read as rubber-banding rather than direct manipulation. */
+main.resizing { transition: none; }
+
+#cy { grid-column: 3; background: var(--surface); min-width: 0; }
+
+/* The hit area is the full 6px track; the visible line is 1px and centred, so it reads as the
+   one rule between two panes rather than a rule of its own — #filters and #panel carry no
+   border themselves any more, this is it. `.active` (set on pointerdown, ui/app.js) covers the
+   case a fast drag carries the pointer off this 6px strip: the drag is tracked on `document`
+   and keeps going, so the highlight has to stay too, not just follow :hover.
+   Each also gets an explicit grid-column (with #filters/#cy/#panel below): auto-placement packs
+   *generating* boxes in document order, so the moment #filters collapses to `hidden` (removed
+   from the flow entirely, not just 0 width) the grid would otherwise slide #cy left to fill the
+   gap — exactly the "collapsing the left pane hides the graph" bug this pins against. */
+#filters-resizer { grid-column: 2; }
+#panel-resizer { grid-column: 4; }
+.resizer { position: relative; cursor: col-resize; background: transparent; }
+.resizer::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 1px;
+  background: var(--border);
+}
+.resizer:hover, .resizer:focus-visible, .resizer.active { background: var(--hover); }
+.resizer:focus-visible { outline: 2px solid var(--muted); outline-offset: -2px; }
+.resizer[hidden] { display: none; }
+
+/* ---- filter rail --------------------------------------------------------- */
+#filters {
+  grid-column: 1;
+  overflow-y: auto;
+  padding: 4px 12px 24px;
+}
+#filters[hidden] { display: none; }
+#filters section { padding: 12px 0; border-bottom: 1px solid var(--rule); }
+#filters section:last-child { border-bottom: 0; }
+#filters h2 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+/* The view controls stack as full-width rows: at 232px the rail has no room for a line of
+   buttons, and stacking is also what keeps the three groups (layout mode · labels · reframe)
+   legible as three things rather than as one long strip. */
+#filters .view > * + * { margin-top: 6px; }
+#filters .view > button { width: 100%; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.row:hover { color: var(--ink); }
+.sub { padding-left: 18px; }
+.hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+select { padding: 1px 4px; margin-left: auto; }
+
+/* A legend is always present, so identity is never colour alone. */
+.key { width: 10px; height: 10px; border-radius: 2px; flex: none; background: var(--other); }
+
+/* Edge keys are a line, not a chip — solid or dotted, matching ui/graph.js's lineStyle exactly,
+   so the legend shows the same two channels (colour and line-style) the graph draws with rather
+   than colour alone. A border rather than a fill is what lets "dotted" render at all. */
+.key.begets, .key.continues, .key.branches, .key.binds, .key.catalyzes, .key.inhibits,
+.key.untyped, .key.ratified, .key.pending {
+  width: 16px; height: 0; border-radius: 0; background: none;
+}
+.key.begets, .key.continues { border-top: 2px solid var(--muted); }
+.key.branches { border-top: 2px dotted var(--muted); }
+.key.binds, .key.ratified { border-top: 3px solid var(--ink-2); }
+.key.catalyzes { border-top: 3px solid var(--good); }
+.key.inhibits { border-top: 3px solid var(--critical); }
+/* Untyped and suggested share a colour in the graph itself (ui/graph.js pendingBind) — neither
+   is a settled catalyzes/inhibits verdict — but only suggested is also still dotted: a ratified
+   untyped bind is a settled "no verdict either way" (§7), not a placeholder. */
+.key.untyped { border-top: 3px solid var(--pending); }
+.key.pending { border-top: 3px dotted var(--pending); }
+
+.key.c0 { background: var(--series-1); }
+.key.c1 { background: var(--series-2); }
+.key.c2 { background: var(--series-3); }
+
+#legend .row .size { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+#legend .cy { font-size: 11px; color: var(--muted); }
+
+/* ---- detail panel -------------------------------------------------------- */
+#panel {
+  grid-column: 5;
+  overflow-y: auto;
+  padding: 14px 16px 20px;
+  background: var(--plane);
+}
+#panel[hidden] { display: none; }
+#panel h2 { margin: 0 24px 2px 0; font-size: 15px; line-height: 1.35; }
+#panel .kind {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted);
+}
+#panel .close {
+  position: absolute; right: 14px; margin-top: -2px;
+  border: 0; background: none; font-size: 17px; line-height: 1; padding: 2px 5px;
+}
+#panel dl {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 12px;
+  margin: 12px 0; font-size: 12px;
+}
+#panel dt { color: var(--muted); }
+#panel dd { margin: 0; overflow-wrap: anywhere; }
+#panel .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+#panel .body { margin: 12px 0; line-height: 1.6; white-space: pre-wrap; text-align: justify; }
+#panel h3 {
+  margin: 16px 0 4px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+}
+#panel .note-link {
+  display: block; width: 100%; text-align: left;
+  border: 0; background: none; padding: 3px 4px; margin-left: -4px;
+  border-radius: 3px; line-height: 1.4;
+}
+#panel .note-link:hover { background: var(--hover); }
+#panel .note-link .tag { color: var(--muted); font-size: 11px; }
+#panel .score {
+  font-variant-numeric: tabular-nums; color: var(--muted);
+  font-size: 11px; margin-right: 6px;
+}
+#panel .claim { margin: 10px 0; padding: 8px 10px; border-radius: 4px; background: var(--surface); }
+#panel .rationale { color: var(--ink-2); font-style: italic; }
+#panel footer {
+  margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--rule);
+  font-size: 11px; color: var(--muted);
+}
+.pill {
+  display: inline-block; padding: 0 6px; border-radius: 9px;
+  border: 1px solid var(--border); font-size: 11px; color: var(--ink-2);
+}
+.pill.good { border-color: var(--good); color: var(--good); }
+.pill.critical { border-color: var(--critical); color: var(--critical); }
+.terms { font-variant-numeric: tabular-nums; }
+
+/* ---- the write surface (ui/write.js) ------------------------------------- */
+/* Deliberately quiet. These sit inside a panel whose subject is a note, and a row of loud
+   buttons would read as the point of the panel rather than as something available in it. */
+#panel .field { display: block; margin: 10px 0; }
+#panel .field > span {
+  display: block; margin-bottom: 3px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted);
+}
+#panel textarea, #panel .field input {
+  width: 100%; font: inherit; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 8px;
+}
+#panel textarea { line-height: 1.6; resize: vertical; }
+#panel textarea:focus, #panel .field input:focus { outline: 2px solid var(--muted); }
+
+#panel .verdict { display: flex; align-items: center; gap: 8px; margin: 5px 0; flex-wrap: wrap; }
+#panel .verdict.actions { margin-top: 14px; }
+#panel .verdict .hint { margin: 0; }
+#panel .sub-claim { font-size: 12px; color: var(--ink-2); }
+#panel .claim.bad { border-left: 2px solid var(--critical); }
+
+/* The suggest button rides alongside its neighbour rather than under it, so the list still
+   reads as a list of notes with an action, not as a list of actions. */
+#panel .nearrow { display: flex; align-items: flex-start; gap: 6px; }
+#panel .nearrow .note-link { flex: 1; min-width: 0; }
+#panel .nearrow .wr { flex: none; margin-top: 2px; }
+
+#panel .qrow { padding: 8px 0; border-bottom: 1px solid var(--rule); }
+#panel .qrow:last-of-type { border-bottom: 0; }
+#panel .qrow .claim { margin: 0 0 4px; }
+/* The queue's claim doubles as a jump-to-graph control, so it is a real button underneath —
+   full width and left-aligned rather than the browser's centred, shrink-to-fit default. Its
+   hover is already covered by the plain `button` rule near the top of this file. */
+#panel .qrow .claim.link { display: block; width: 100%; text-align: left; color: var(--ink); }
+#panel .qrow .rationale { margin: 0 0 6px; font-size: 12px; }
+
+/* The two drop zones. Side by side and equally weighted, because they are two inboxes rather
+   than a primary one and an exception — and dashed, which is the one shape a browser has taught
+   everybody means "put something here". */
+#panel .drops { display: flex; gap: 8px; margin: 12px 0 10px; }
+#panel .dropzone {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 14px 8px; text-align: center; cursor: pointer;
+  border: 1px dashed var(--edge); border-radius: 5px;
+  background: var(--surface); color: var(--ink-2);
+}
+#panel .dropzone:hover { background: var(--hover); color: var(--ink); }
+#panel .dropzone .hint { margin: 0; font-size: 11px; }
+/* Dragging over is the moment the target has to be unambiguous — the pointer is carrying
+   something and the cursor alone does not say which of the two it would land in. */
+#panel .dropzone.over {
+  border-style: solid; border-color: var(--muted);
+  background: var(--hover); color: var(--ink);
+}
+
+/* A write in flight: the panel stops taking clicks rather than queueing a second one behind
+   the first, since each ends in a full re-read of the corpus. */
+body.writing #panel { opacity: 0.55; pointer-events: none; }
+
+/* ---- the search panel (ui/search.js) ------------------------------------- */
+/* The form reuses .field and .seg.wide from above, so a search box looks like the compose form
+   and the scope selector like the date window — the two shapes this page has already taught. */
+#panel .dates { display: flex; gap: 8px; }
+#panel .dates .field { flex: 1; min-width: 0; }
+/* A date input is wider than its content and would otherwise push the pair past the panel. */
+#panel .dates input { width: 100%; min-width: 0; }
+/* Scoped to .scope rather than to every .seg.wide in the panel: compose's lineage selector is one
+   too, and it is not this panel's to restyle. Four labels in 332px need the tighter padding. */
+#panel .seg.wide.scope { margin: 10px 0; }
+#panel .seg.wide.scope button { padding: 3px 4px; }
+
+/* The hit and its two affordances: the row itself highlights on the map, `open` reads the note.
+   Same arrangement as .nearrow — a list of notes with an action, not a list of actions. */
+#panel .hit { display: flex; align-items: flex-start; gap: 6px; }
+#panel .hit .claim.link { flex: 1; min-width: 0; margin: 0; }
+#panel .hit .claim.link .muted { display: block; font-size: 11px; }
+#panel .hit .go { flex: none; }
+#panel .snip { margin: 4px 0 0; font-size: 12px; color: var(--ink-2); }
+#panel .snip.src { color: var(--muted); overflow-wrap: anywhere; }
+
+/* ---- the link panel (ui/link.js) ----------------------------------------- */
+/* Two slots, stacked, with the swap between them — the vertical split IS the direction, so the
+   layout has to make "the top one is the from" legible without reading the labels. Boxed rather
+   than run together for the same reason: a slot is a place something goes, and an empty one has
+   to look like a place rather than like the end of the form. */
+#panel .slot {
+  margin: 10px 0; padding: 8px 10px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 5px;
+}
+#panel .slot .field { margin: 0; }
+#panel .slot .field > span { font-weight: 500; text-transform: none; letter-spacing: 0; }
+#panel .slot .hit { margin-top: 2px; }
+#panel .slot .qrow { padding: 6px 0; }
+#panel .lrole {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted); margin-bottom: 4px;
+}
+/* Centred and small: it sits between two slots as the hinge between them, and a full-width button
+   there would read as the panel's main action rather than as a correction to the order. */
+#panel .lswap { display: flex; justify-content: center; margin: -4px 0; }
+#panel .lswap button { font-size: 11px; padding: 1px 8px; }
+/* Grey once the pair is bound: the stored direction is no longer the form's to set, so the hinge
+   between the two slots has nothing left to turn. Same two-channel treatment as #walk[disabled] —
+   the dimming plus a `title` that names the remedy, since a control that is merely faint tells you
+   that it is off and never why. */
+#panel .lswap button[disabled] { opacity: 0.45; cursor: default; }
+#panel .lswap button[disabled]:hover { background: var(--surface); color: var(--ink-2); }
+
+/* ---- the status panel (ui/status.js) ------------------------------------- */
+/* Denser than the rest of the panel, because this one is a readout rather than a page: four
+   columns of job at 380px only work if the type gets out of the way. */
+#panel h2.spaced { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--rule); }
+#panel .pills { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+
+#panel .jobs { margin: 10px 0; font-size: 12px; }
+#panel .jobrow {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px;
+  padding: 4px 0; border-bottom: 1px solid var(--rule);
+  font-variant-numeric: tabular-nums; align-items: baseline;
+}
+#panel .jobrow:last-child { border-bottom: 0; }
+#panel .jobrow > span:not(:first-child) { text-align: right; }
+#panel .jobrow.head {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted); border-bottom-color: var(--border);
+}
+/* A due job is the one fact on this panel worth interrupting for: it means the scheduler has
+   not picked it up, which usually means the scheduler is not running. */
+#panel .jobrow .due { color: var(--critical); font-weight: 600; }
+
+#panel .logtail {
+  margin: 6px 0; padding: 8px 10px; max-height: 190px; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; line-height: 1.5; white-space: pre; color: var(--ink-2);
+}
+
+#toast {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 9px 14px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+  font-size: 12px; line-height: 1.5; z-index: 50;
+}
+#toast[hidden] { display: none; }
+#toast.bad { border-color: var(--critical); }
+#toast .wr { margin-left: 8px; }

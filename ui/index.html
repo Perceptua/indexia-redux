@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>indexia — graph</title>
+<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+
+<header id="bar">
+  <!-- Controls the pane it sits above: #filters is the leftmost thing on the page, so its
+       toggle is too. Collapsing it is a view preference like `labels`, not a filter, and
+       persists the same way (ui/app.js FILTERS_KEY). Label and aria-pressed are kept in sync
+       with #filters' open/closed state in applyFiltersWidth(), never set here. -->
+  <button type="button" id="togglefilters" aria-pressed="true" aria-controls="filters"
+          title="Hide the view &amp; filters pane">‹</button>
+  <span class="brand">indexia</span>
+  <span id="corpus" class="muted">loading…</span>
+  <span class="grow"></span>
+  <!-- Not a panel, which is why it stands outside the group below: it is a MODE, and while it is
+       on, selecting a note means something it did not mean a moment ago. Disabled until a note is
+       selected, because a walk begins somewhere (§11.1) and there is nothing to seed it with.
+       data-write-ui: a walk writes Ops and moves Note.visited, so a --read-only server hides it. -->
+  <button type="button" id="walk" data-write-ui data-write="walk" aria-pressed="false" disabled
+          title="select a note to begin a walk from it">walk</button>
+  <!-- The six things that can fill the right pane. Framed as one group since exactly one of
+       them (or none) is ever the reason the pane is open — data-panel-source is how app.js
+       tracks and highlights which. -->
+  <div class="seg" role="group" aria-label="Panel">
+    <!-- No data-write-ui, like `status` below: searching reads and never writes, so it stays on a
+         --read-only server. First in the group so that the two read-only buttons are also the
+         ones that survive there, and the group still has a first and a last child to round. -->
+    <button type="button" data-search data-panel-source="search" aria-pressed="false"
+            title="find notes by title, body, source, author or date">search</button>
+    <!-- The write affordances. Hidden by ui/write.js when the server reports no write surface
+         (ui.sh run --read-only), rather than offered and then refused with a 403. -->
+    <button type="button" data-write-ui data-write="compose" data-panel-source="compose"
+            aria-pressed="false" hidden>+ note</button>
+    <!-- Before `queue`, because that is the order the two are used in: propose, then dispose
+         (§8.2). While it holds the pane it is also a MODE — clicking a note fills a slot instead
+         of opening the note — which is why app.js ends it the moment anything else fills the
+         pane, and why aria-pressed on this button is the reader's only warning that a click
+         means something else right now. -->
+    <button type="button" data-write-ui data-write="link" data-panel-source="link"
+            aria-pressed="false" hidden
+            title="pick two notes and propose a bind between them">link</button>
+    <button type="button" data-write-ui data-write="queue" data-panel-source="queue"
+            aria-pressed="false" hidden
+            title="suggested binds waiting on a verdict">queue</button>
+    <button type="button" data-write-ui data-write="staging" data-panel-source="staging"
+            aria-pressed="false" hidden
+            title="drop files, and see what is waiting in staging/ and staging/scans/">inbox</button>
+    <!-- No data-write-ui: this one reads and never writes, so it stays on a --read-only server.
+         It is wired by ui/status.js, since write.js only binds #bar when writes are on. -->
+    <button type="button" data-status data-panel-source="status" aria-pressed="false"
+            title="scheduled jobs, daemons, and what the corpus measures">status</button>
+  </div>
+</header>
+
+<main>
+  <!-- Two different questions, in one rail: how the graph is drawn (first) and what is in it
+       (everything after). They are kept apart by the h2s and by the control shape — a mode or an
+       action is a button here, the way the date window below is, and only a filter is a checkbox.
+       The header keeps just the panel group: it is the one thing that fills the right pane, and a
+       row of graph controls beside it read as a toolbar with no subject. -->
+  <aside id="filters" aria-label="View and filters">
+
+    <section class="view">
+      <h2>view</h2>
+      <div class="seg wide" role="group" aria-label="Layout">
+        <button type="button" data-layout="force" class="on">force</button>
+        <button type="button" data-layout="timeline">timeline</button>
+      </div>
+      <button type="button" id="labels" class="on" aria-pressed="true">labels</button>
+      <div class="seg wide" role="group" aria-label="Reframe the graph">
+        <button type="button" id="relayout">re-layout</button>
+        <button type="button" id="fit">fit</button>
+        <button type="button" id="resetpos"
+                title="Forget every position you have dragged">reset</button>
+      </div>
+      <p class="hint">Filtering never moves a node — these are the only things that do.</p>
+    </section>
+
+    <section>
+      <h2>window</h2>
+      <div class="seg wide" role="group" aria-label="Date window">
+        <button type="button" data-days="7">7d</button>
+        <button type="button" data-days="30">30d</button>
+        <button type="button" data-days="182" class="on">6mo</button>
+        <button type="button" data-days="365">1y</button>
+        <button type="button" data-days="all">all</button>
+      </div>
+      <label class="row"><input type="checkbox" id="strict"> strict — hide context notes</label>
+      <p class="hint" id="windowhint"></p>
+    </section>
+
+    <section>
+      <h2>edges</h2>
+      <label class="row"><input type="checkbox" data-edge="begets" data-master checked>
+        <span class="key begets"></span> begets <span class="muted">lineage</span></label>
+      <div class="sub">
+        <label class="row"><input type="checkbox" data-begets-mode="continues" checked>
+          <span class="key continues"></span> continues</label>
+        <label class="row"><input type="checkbox" data-begets-mode="branches" checked>
+          <span class="key branches"></span> branches</label>
+      </div>
+      <label class="row"><input type="checkbox" data-edge="binds" data-master checked>
+        <span class="key binds"></span> binds <span class="muted">association</span></label>
+      <div class="sub">
+        <label class="row"><input type="checkbox" data-bind-mode="catalyzes" checked>
+          <span class="key catalyzes"></span> catalyzes</label>
+        <label class="row"><input type="checkbox" data-bind-mode="inhibits" checked>
+          <span class="key inhibits"></span> inhibits</label>
+        <label class="row"><input type="checkbox" data-bind-mode="untyped" checked>
+          <span class="key untyped"></span> untyped</label>
+        <label class="row"><input type="checkbox" data-bind-status="ratified" checked>
+          <span class="key ratified"></span> ratified</label>
+        <label class="row"><input type="checkbox" data-bind-status="suggested" checked>
+          <span class="key pending"></span> suggested</label>
+      </div>
+    </section>
+
+    <section>
+      <h2>notes</h2>
+      <label class="row"><input type="checkbox" data-status="active" checked> active</label>
+      <label class="row"><input type="checkbox" data-status="proposed" checked> proposed</label>
+      <label class="row">unlinked
+        <select id="orphans">
+          <option value="all">show all</option>
+          <option value="hide">hide</option>
+          <option value="only">only these</option>
+        </select>
+      </label>
+      <label class="row"><input type="checkbox" id="hideisolated"> hide isolated after filtering</label>
+    </section>
+
+    <section>
+      <h2>communities</h2>
+      <label class="row"><input type="checkbox" id="communities-all" data-master checked> all</label>
+      <div id="legend"></div>
+    </section>
+
+  </aside>
+
+  <!-- A drag handle is its own grid track (ui/style.css), not an overlay, so its hit area is
+       always exactly where the pointer expects it regardless of what either neighbour is doing.
+       Hidden together with #filters (ui/app.js applyFiltersWidth) since there is nothing to
+       grab once that column is 0 wide — reopening is the button above, not a 0px sliver. -->
+  <div id="filters-resizer" class="resizer" role="separator" aria-orientation="vertical"
+       aria-controls="filters" aria-label="Resize the view and filters pane" tabindex="0"></div>
+
+  <div id="cy"></div>
+
+  <!-- Hidden together with #panel (ui/app.js applyPanelWidth): closed, there is nothing to
+       resize against. -->
+  <div id="panel-resizer" class="resizer" role="separator" aria-orientation="vertical"
+       aria-controls="panel" aria-label="Resize the detail pane" tabindex="0" hidden></div>
+
+  <aside id="panel" hidden aria-label="Detail"></aside>
+</main>
+
+<div id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="/ui/vendor/cytoscape.min.js"></script>
+<script type="module" src="/ui/app.js"></script>
+</body>
+</html>
