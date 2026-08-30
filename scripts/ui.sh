@@ -19,10 +19,27 @@ running() { daemon_running "$NAME" "$SCRIPT"; }
 
 with_env() { load_env; export BASE_URL DB ARCADEDB_ROOT_PASSWORD; }
 
+# This node's MagicDNS FQDN, or empty if tailscale is down/unreachable — the same field
+# scripts/tailscale.py reads, but read-only: no cert is provisioned here.
+tailscale_fqdn() {
+  tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get("Self", {}).get("DNSName", "").rstrip("."))
+except Exception:
+    pass
+'
+}
+
 # What to print for a server about to start (or just found running) with these args.
 url_hint() {
   for a in "${@:2}"; do
-    [ "$a" = "--tailscale" ] && { echo "check the log for the https:// tailnet URL"; return; }
+    if [ "$a" = "--tailscale" ]; then
+      local fqdn; fqdn="$(tailscale_fqdn)"
+      [ -n "$fqdn" ] && echo "https://$fqdn:$PORT/" || echo "check the log for the https:// tailnet URL"
+      return
+    fi
   done
   echo "http://127.0.0.1:$PORT/"
 }
@@ -56,12 +73,15 @@ case "${1:-status}" in
     if running; then
       pid="$(daemon_pid "$NAME" "$SCRIPT")"
       if tailscale_running; then
-        ip="$(tailscale ip -4 2>/dev/null)"
-        echo "[ui] UP (pid $pid) — serving over Tailscale; check the log for the https:// URL"
-        if [ -n "$ip" ]; then
-          curl -s "https://$ip:$PORT/api/health" || echo "[ui] but /api/health did not answer"
+        # The FQDN, not the raw tailnet IP: the cert's SAN names the MagicDNS hostname, not the
+        # IP, so a curl straight to the IP fails TLS verification even though the server is fine.
+        fqdn="$(tailscale_fqdn)"
+        if [ -n "$fqdn" ]; then
+          echo "[ui] UP (pid $pid) — https://$fqdn:$PORT/"
+          curl -s "https://$fqdn:$PORT/api/health" || echo "[ui] but /api/health did not answer"
         else
-          echo "[ui] (tailscale ip -4 failed — is tailscale up?)"
+          echo "[ui] UP (pid $pid) — serving over Tailscale, but this node's MagicDNS name could "
+          echo "[ui] not be read (is tailscale up?) — check the log for the https:// URL"
         fi
       else
         echo "[ui] UP (pid $pid) — http://127.0.0.1:$PORT/"

@@ -441,7 +441,12 @@ finally:
 # Built third and only after the second is down: Handler.state (and now Handler.allowed_host)
 # are class attributes. `allowed_host` here stands in for the FQDN scripts/tailscale.py would
 # actually provision — the guard logic does not care how the name was obtained, only that it
-# matches exactly, so this is a faithful test without needing a real tailnet in CI.
+# matches exactly, so this is a faithful test of the ALLOWLIST without needing a real tailnet
+# in CI. Bound to 127.0.0.1 throughout, deliberately: a real `--tailscale` run overrides --host
+# and binds the tailnet IP alone, so loopback is actually unreachable at the socket level then
+# (verified live: `curl http://127.0.0.1:PORT` gets connection refused once bound that way).
+# What is tested here is narrower and still worth pinning — the guard's Host/Origin check, in
+# isolation, treats loopback and the widened name as equally valid, neither shadowing the other.
 FAKE_FQDN = "test-node.tailnet.ts.net"
 httpd = ui.make_server(db, host="127.0.0.1", port=0, embedder=None, allowed_host=FAKE_FQDN)
 port = httpd.server_address[1]
@@ -469,7 +474,7 @@ try:
           code == 403, str(code))
 
     code, _ = call(f"{base}/api/note", payload={"title": "no body"})
-    check("loopback keeps working unmodified alongside the widened name",
+    check("the guard's default Host check is unmodified by a widened allowed_host",
           code == 400, str(code))
 finally:
     httpd.shutdown()

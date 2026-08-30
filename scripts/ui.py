@@ -1240,8 +1240,11 @@ def serve(db, host=BIND_HOST, port=DEFAULT_PORT, writable=True, tls=None, allowe
           + ("writes go through Ingestor/LinkManager/WalkManager, each with its Op (spec §12.3)"
              if writable else "read-only, writes nothing (spec §13)"), flush=True)
     if allowed_host:
-        print(f"[ui]   reachable from the tailnet at {shown} — loopback still works too",
-              flush=True)
+        # Bound to the tailnet IP alone (--tailscale overrides --host), so this is the ONLY
+        # address the socket answers on — a plain http://127.0.0.1 request gets connection
+        # refused, not a second way in. Only the write guard's allowlist gained an entry.
+        print(f"[ui]   loopback is not reachable while bound this way — use {shown} from any "
+              "device on the tailnet, including this one", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -1271,9 +1274,10 @@ def main():
                    help="bind this machine's Tailscale IP and serve HTTPS with a "
                         "tailscale-issued cert for its MagicDNS name, so other devices on the "
                         "tailnet can reach the graph UI at a trusted https:// URL. Overrides "
-                        "--host; the write guard's Host/Origin check widens to accept that name "
-                        "too, alongside loopback (never a wildcard — see Handler._host_allowed). "
-                        "Requires `tailscale` to be installed and up.")
+                        "--host outright — loopback is not reachable while running this way, "
+                        "only the tailnet name is. The write guard's Host/Origin allowlist gains "
+                        "that one name (never a wildcard — see Handler._host_allowed). Requires "
+                        "`tailscale` to be installed and up.")
     p.add_argument("--read-only", dest="read_only", action="store_true",
                    default=bool(os.environ.get("INDEXIA_UI_READONLY")),
                    help="refuse every write with a 403 — the pre-v0.8.1 surface "
