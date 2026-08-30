@@ -75,7 +75,7 @@ logs: ## Follow ArcadeDB container logs (N=lines, default 100)
 
 ##@ Graph UI
 
-ui-up: ## Start the graph UI (http://127.0.0.1:8420/)
+ui-up: ## Start the graph UI (http://127.0.0.1:8420/; ARGS=--tailscale to serve the tailnet over HTTPS)
 	bash scripts/ui.sh start $(ARGS)
 
 ui-down: ## Stop the graph UI
