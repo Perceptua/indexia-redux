@@ -437,6 +437,44 @@ finally:
     httpd.shutdown()
     httpd.server_close()
 
+# ---- --tailscale widens the guard by exactly one name, never a wildcard -----
+# Built third and only after the second is down: Handler.state (and now Handler.allowed_host)
+# are class attributes. `allowed_host` here stands in for the FQDN scripts/tailscale.py would
+# actually provision — the guard logic does not care how the name was obtained, only that it
+# matches exactly, so this is a faithful test without needing a real tailnet in CI.
+FAKE_FQDN = "test-node.tailnet.ts.net"
+httpd = ui.make_server(db, host="127.0.0.1", port=0, embedder=None, allowed_host=FAKE_FQDN)
+port = httpd.server_address[1]
+base = f"http://127.0.0.1:{port}"
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+try:
+    code, _ = call(f"{base}/api/note", payload={"title": "no body"},
+                   headers={"Host": FAKE_FQDN})
+    check("with allowed_host set, that exact Host clears the guard — the 400 below is the "
+          "route's own validation (no body), not a 403 refusal", code == 400, str(code))
+
+    code, _ = call(f"{base}/api/note", payload={"title": "no body"},
+                   headers={"Origin": f"https://{FAKE_FQDN}:{port}"})
+    check("...and so does an Origin naming the same FQDN and this server's port",
+          code == 400, str(code))
+
+    code, _ = call(f"{base}/api/note", payload={"body": MARK},
+                   headers={"Host": "evil.example"})
+    check("a Host naming neither loopback nor the provisioned FQDN is still refused — "
+          "widening added one name, not a wildcard", code == 403, str(code))
+
+    code, _ = call(f"{base}/api/note", payload={"body": MARK},
+                   headers={"Origin": f"https://evil.example:{port}"})
+    check("...and neither does a spoofed Origin, even on the right port",
+          code == 403, str(code))
+
+    code, _ = call(f"{base}/api/note", payload={"title": "no body"})
+    check("loopback keeps working unmodified alongside the widened name",
+          code == 400, str(code))
+finally:
+    httpd.shutdown()
+    httpd.server_close()
+
 check("`Note.visited` is back exactly where it started — a walk is the one thing here that may "
       "move it, and DELETE_WALK gives back precisely what it took (§13.2). Every other write "
       "above left it alone: committing a note is not walking it, any more than reading one is",

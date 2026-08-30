@@ -4,6 +4,7 @@
     ui.sh start | stop | status         # the server as a daemon
     ui.sh run [--port N]                # the server in the foreground (debugging)
     ui.sh run --read-only               # the pre-v0.8.1 surface: reads only, every write 403
+    ui.sh run --tailscale               # reachable from the tailnet, HTTPS (see scripts/tailscale.py)
     ui.sh run --snapshot [--json]       # the graph payload, no server at all
     ui.sh run --note <id> [--json]      # one note's detail payload
 
@@ -61,12 +62,14 @@ arrives on click.
 import argparse
 import json
 import os
+import ssl
 import sys
 import threading
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -74,10 +77,12 @@ import inbox  # noqa: E402  (the two drop zones, shared with nothing else — se
 import ingest_staging  # noqa: E402  (the staging batch, shared with ingest-staging.sh)
 import notelib  # noqa: E402  (import needs the path above)
 import scheduler  # noqa: E402  (its JOBS table and cadence arithmetic; main() is __main__-guarded)
+import tailscale  # noqa: E402  (--tailscale: MagicDNS IP + cert provisioning)
 from analytics import autocatalysis, common, criticality, fitness, walks  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UI_DIR = os.path.realpath(os.path.join(REPO, "ui"))
+TAILSCALE_CERT_DIR = os.path.join(REPO, "certs", "tailscale")
 
 CONTRACT_VERSION = 2     # bumped when the payload shape changes in a way the page must notice.
                          # 2: the write surface. The page checks it and says so, rather than a
@@ -85,7 +90,9 @@ CONTRACT_VERSION = 2     # bumped when the payload shape changes in a way the pa
 DEFAULT_WINDOW_DAYS = 182   # ~6 months: the default reading window, long enough that a line of
                             # thought is still whole and short enough to be a working set
 DEFAULT_PORT = 8420      # fixed by default because localStorage (dragged positions) is per-origin
-BIND_HOST = "127.0.0.1"  # loopback ONLY — this serves note bodies over plain HTTP (README security)
+BIND_HOST = "127.0.0.1"  # loopback by default — this serves note bodies (and accepts writes)
+                         # over plain HTTP unless --tailscale opts into a wider bind + TLS
+                         # (README security)
 SNAPSHOT_TTL = 60.0      # seconds; a personal corpus changes on human timescales, and every
                          # rebuild is five whole-table scans
 KNN_SHOW = 8             # semantic neighbours in the detail panel, off the nightly cache
@@ -102,6 +109,8 @@ WRITE_HEADER = "X-Indexia-Write"   # see Handler._guard — its absence from a c
                                    # is what refuses the request
 MAX_BODY = 1 << 20       # 1 MiB — a note is prose somebody typed, and prose does not weigh this
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+# Always allowed. --tailscale adds exactly one more name at runtime — the provisioned MagicDNS
+# FQDN, on Handler.allowed_host — never a wildcard; see Handler._host_allowed.
 LINK_ACTIONS = ("suggest", "ratify", "retype", "reject")
 # The four a button can reach, and since v0.8.3 that is four of the five a walk has: `fork` and
 # `delete` are decisions about a walk you are no longer taking, and belong wherever past walks are
@@ -923,6 +932,11 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"     # keep-alive; every reply below sets Content-Length
     state = None
 
+    # Set by make_server()/serve() when running --tailscale: the one extra Host/Origin value
+    # accepted beyond loopback (the provisioned MagicDNS FQDN). None means loopback-only, which
+    # remains the default.
+    allowed_host = None
+
     def log_message(self, fmt, *args):
         print(f"[ui] {self.address_string()} {fmt % args}", flush=True)
 
@@ -951,6 +965,12 @@ class Handler(BaseHTTPRequestHandler):
         with open(full, "rb") as fh:
             self._send(200, fh.read(), ctype)
 
+    def _host_allowed(self, host):
+        """Loopback, always — plus `allowed_host` when `--tailscale` set one. No wildcard: the
+        tailnet name accepted is exactly the FQDN the cert was issued for, nothing derived from
+        the request itself, so a hostile Host header cannot talk its way past this by guessing."""
+        return host in LOCAL_HOSTS or (self.allowed_host is not None and host == self.allowed_host)
+
     # -- the write guard --
     def _guard(self, path):
         """Refuse anything that is not this page talking to its own server.
@@ -970,8 +990,11 @@ class Handler(BaseHTTPRequestHandler):
         nothing to steal. A write needs no reply to do damage — the same page could have put
         notes in the corpus. Three cheap checks close that, and the last one does the work:
 
-          * `Host` must name us. A hostile DNS name that resolves to 127.0.0.1 (rebinding)
-            does not, so this is the check that makes "loopback only" mean what it says.
+          * `Host` must name us. A hostile DNS name that resolves to 127.0.0.1 (rebinding) does
+            not, so this is the check that makes "loopback only" mean what it says. Under
+            `--tailscale` exactly one more name is accepted — `allowed_host`, the FQDN the cert
+            was actually issued for — never a wildcard, so a rebind attempt still has nothing to
+            aim at (see `_host_allowed`).
           * `Origin`, when the browser sends one, must be us.
           * the request must carry `Content-Type: application/json` AND X-Indexia-Write.
 
@@ -982,12 +1005,16 @@ class Handler(BaseHTTPRequestHandler):
         """
         port = self.server.server_address[1]
         host, hport = _host_port(self.headers.get("Host"))
-        if host not in LOCAL_HOSTS or (hport is not None and hport != port):
-            return (403, "refused: Host must name this server on loopback"), None
+        if not self._host_allowed(host) or (hport is not None and hport != port):
+            return (403, "refused: Host must name this server"), None
         origin = self.headers.get("Origin")
         if origin:
             ohost, oport = _host_port(origin)
-            if ohost not in LOCAL_HOSTS or (oport or 80) != port:
+            # Origin's scheme decides the default port when the browser omits an explicit one.
+            # This server is plain HTTP on loopback and HTTPS under --tailscale, never both, so
+            # allowed_host alone (set only in the latter case) tells the two apart.
+            default_port = 443 if self.allowed_host else 80
+            if not self._host_allowed(ohost) or (oport or default_port) != port:
                 return (403, f"refused: cross-origin write from {origin}"), None
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
             return (415, "refused: a write must be Content-Type: application/json"), None
@@ -1168,28 +1195,53 @@ def _graph_key(query):
     return (days, since, one("until"), as_of)
 
 
-def make_server(db, host=BIND_HOST, port=DEFAULT_PORT, writable=True, embedder=notelib._UNSET):
+def make_server(db, host=BIND_HOST, port=DEFAULT_PORT, writable=True, embedder=notelib._UNSET,
+                tls=None, allowed_host=None):
     """A bound, not-yet-serving HTTP server. Split out so a test can bind port 0 and drive the
     real routes rather than a stand-in (tests/test_ui_write.py).
+
+    ``tls``, if given, is a ``(cert_path, key_path)`` pair — see scripts/tailscale.py — and the
+    socket is wrapped after binding so a bad cert fails at startup, not on the first request.
+    ``allowed_host`` is the extra Host/Origin value the write guard accepts beyond loopback (the
+    tailnet's MagicDNS FQDN); see Handler._host_allowed. Passing one without the other is legal
+    but pointless — --tailscale in main() always sets both together.
 
     Handler.state is a class attribute, so two servers in one process share it — fine for the
     one process that ever makes two, which shuts the first down before building the second."""
     Handler.state = State(db, writable=writable, embedder=embedder)
+    Handler.allowed_host = allowed_host
     try:
         httpd = ThreadingHTTPServer((host, port), Handler)
     except OSError as e:
         raise SystemExit(f"[ui] cannot bind {host}:{port} — {e}  "
                          f"(already running? scripts/ui.sh status)")
     httpd.daemon_threads = True
+    if tls is not None:
+        cert_path, key_path = tls
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
     return httpd
 
 
-def serve(db, host=BIND_HOST, port=DEFAULT_PORT, writable=True):
-    """Run the server until interrupted. Binds loopback only — the payload is the corpus."""
-    httpd = make_server(db, host=host, port=port, writable=writable)
-    print(f"[ui] serving http://{host}:{port}/  — "
+def serve(db, host=BIND_HOST, port=DEFAULT_PORT, writable=True, tls=None, allowed_host=None,
+          shown_host=None):
+    """Run the server until interrupted. Binds loopback only, unless `tls`/`allowed_host` widen
+    it for --tailscale — see main().
+
+    ``shown_host`` overrides the hostname printed in the URL — used for --tailscale, where the
+    cert is issued for the tailnet MagicDNS name, not the bind address (a raw Tailscale IP) itself.
+    """
+    httpd = make_server(db, host=host, port=port, writable=writable, tls=tls,
+                        allowed_host=allowed_host)
+    scheme = "https" if tls is not None else "http"
+    shown = shown_host or host
+    print(f"[ui] serving {scheme}://{shown}:{port}/  — "
           + ("writes go through Ingestor/LinkManager/WalkManager, each with its Op (spec §12.3)"
              if writable else "read-only, writes nothing (spec §13)"), flush=True)
+    if allowed_host:
+        print(f"[ui]   reachable from the tailnet at {shown} — loopback still works too",
+              flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -1215,6 +1267,13 @@ def main():
                                                                   DEFAULT_PORT)))
     p.add_argument("--host", default=BIND_HOST, help="bind address (loopback by default, and "
                                                      "there is no good reason to widen it)")
+    p.add_argument("--tailscale", action="store_true",
+                   help="bind this machine's Tailscale IP and serve HTTPS with a "
+                        "tailscale-issued cert for its MagicDNS name, so other devices on the "
+                        "tailnet can reach the graph UI at a trusted https:// URL. Overrides "
+                        "--host; the write guard's Host/Origin check widens to accept that name "
+                        "too, alongside loopback (never a wildcard — see Handler._host_allowed). "
+                        "Requires `tailscale` to be installed and up.")
     p.add_argument("--read-only", dest="read_only", action="store_true",
                    default=bool(os.environ.get("INDEXIA_UI_READONLY")),
                    help="refuse every write with a 403 — the pre-v0.8.1 surface "
@@ -1243,7 +1302,17 @@ def main():
     except notelib.ArcadeError as e:
         sys.exit(f"[ui] query failed: {e}\n  SQL: {e.sql}")
 
-    serve(db, host=args.host, port=args.port, writable=not args.read_only)
+    host, tls, shown_host, allowed_host = args.host, None, None, None
+    if args.tailscale:
+        try:
+            host = tailscale.tailscale_ip()
+            cert_path, key_path, fqdn = tailscale.provision_cert(Path(TAILSCALE_CERT_DIR))
+        except tailscale.TailscaleError as e:
+            sys.exit(f"[ui] {e}")
+        tls, shown_host, allowed_host = (cert_path, key_path), fqdn, fqdn
+
+    serve(db, host=host, port=args.port, writable=not args.read_only, tls=tls,
+          allowed_host=allowed_host, shown_host=shown_host)
 
 
 if __name__ == "__main__":

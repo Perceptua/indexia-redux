@@ -146,7 +146,7 @@ Each capability has a fuller how-to below: [Ingestion](#ingestion) · [Embedding
 | `provoke.sh` | Provocation move 1 — semantically near, graph-far; `--stage` proposes suggested links (spec §8.1). |
 | `walk.sh` | Record a reading session: `start`/`visit`/`produce`/`save`/`fork`/`delete`. Writes an `Op` per event + `Note.visited`. See Reading sessions. |
 | `analytics.sh` | **Read-only** reports (spec §13): `fitness`/`debt`/`criticality`/`communities`/`autocatalysis`/`visited`/`walks`/`walk`/`replay`, most with `--as-of`. See Analytics. |
-| `ui.sh [start\|stop\|status\|run]` | Graph view in a browser: serves `http://127.0.0.1:8420/`. Reads the corpus — including a `search` panel over title/body/source/author/date *(v0.8.3)* — and writes to it: add a note, ratify a bind, correct a typo, drain `staging/`, or record a walk *(v0.8.3)*, each through the same `notelib` path the CLI uses *(v0.8.1)*. `run --read-only` restores the reads-only surface; `run --snapshot --json` prints the payload without serving. See [Graph UI](#graph-ui). |
+| `ui.sh [start\|stop\|status\|run]` | Graph view in a browser: serves `http://127.0.0.1:8420/`. Reads the corpus — including a `search` panel over title/body/source/author/date *(v0.8.3)* — and writes to it: add a note, ratify a bind, correct a typo, drain `staging/`, or record a walk *(v0.8.3)*, each through the same `notelib` path the CLI uses *(v0.8.1)*. `run --read-only` restores the reads-only surface; `run --tailscale` serves the tailnet over HTTPS instead of loopback; `run --snapshot --json` prints the payload without serving. See [Graph UI](#graph-ui). |
 | `knn-cache.sh` | Nightly rebuild of the k-NN adjacency cache the provocation moves read; `--status`, `--if-stale`. See Maintenance loop. |
 | `provocation-digest.sh` | Nightly digest of all seven moves → `recent/provocations.md`; stages the strongest move-1/2 suggestions (spec §8.1). |
 | `resurface.sh` | Weekly re-encounter of orphan/inhibited/anniversary notes → `recent/resurface.md` (spec §8.1). |
@@ -580,10 +580,22 @@ bash scripts/ui.sh start        # then open http://localhost:8420/  (also from a
 bash scripts/ui.sh status       # process + /api/health
 bash scripts/ui.sh stop
 bash scripts/ui.sh run --read-only   # the pre-v0.8.1 surface: every write answers 403
+bash scripts/ui.sh run --tailscale   # reachable from the tailnet, HTTPS — see below
 ```
 
 It is **not** started by `up.sh`. Every daemon there is required for correctness; this one is
 opt-in, and it holds the root DB password.
+
+**`--tailscale`** binds this machine's Tailscale IP instead of loopback and serves HTTPS
+with a cert `tailscale cert` issues for the node's MagicDNS name — the same mechanism `audua` and
+`eliciter` use for their own UIs, in [`scripts/tailscale.py`](scripts/tailscale.py). That widens
+the write guard's `Host`/`Origin` check by exactly one name — the provisioned FQDN — never a
+wildcard, so a DNS-rebinding attempt still has nothing to aim at (see Security posture below and
+[`tests/test_ui_write.py`](tests/test_ui_write.py), which pins the widened check the same way it
+pins the loopback-only one). There is no fallback to a self-signed cert: if `tailscale` is not
+installed or not up, `--tailscale` fails loudly rather than serving weaker TLS. `make ui-up
+ARGS=--tailscale` starts it detached; `ui.sh status` reports which mode a running server is in by
+reading its own `/proc/<pid>/cmdline`, since `status` carries none of the args `start` did.
 
 **What it shows.** Every note as a node, sized by `fitness` (square-root, so one hub cannot swallow
 the viewport) and coloured by community; both edge layers at once — `BEGETS` thin and grey with the
@@ -791,7 +803,9 @@ cross-origin request, but it cannot read the reply. A write needs no reply. So a
 cross-origin request can set without a CORS preflight — and the server answers no `OPTIONS`, so
 the preflight fails and the request is never sent. A plain `<form>`, the one thing that can POST
 cross-origin without asking, can set neither. The `Host` header is checked too, which is what
-makes "loopback only" survive a DNS name pointed at `127.0.0.1`.
+makes "loopback only" survive a DNS name pointed at `127.0.0.1` — and under `--tailscale` the same
+check accepts exactly one more `Host`/`Origin` value, the tailnet FQDN the cert was issued for,
+never a wildcard.
 [`tests/test_ui_write.py`](tests/test_ui_write.py) pins all of it, including the 501 on `OPTIONS`
 — that one is not a detail about an unimplemented verb, it *is* the defence.
 
@@ -1101,17 +1115,23 @@ has never reproduced.
 - Only HTTP(S) + binary ports published; Postgres/Gremlin/Mongo/Redis plugins are **off**.
 - Secrets live in `docker/.env` (gitignored, `0600`). They are auto-generated dev values; the root
   password only takes effect on a **fresh** `./data` (reset with `down.sh --reset` to rotate).
-- The **graph UI** (`ui.sh`) holds the root DB password and serves note bodies over **plain HTTP**.
-  It binds `127.0.0.1` only and has no authentication, because it has no non-loopback surface —
-  **do not widen the bind**, which matters more since *(v0.8.1)* it also writes. The browser never
-  talks to ArcadeDB directly; that is what keeps the password server-side.
+- The **graph UI** (`ui.sh`) holds the root DB password and serves note bodies over **plain HTTP**
+  by default. It binds `127.0.0.1` only and has no authentication, because it has no non-loopback
+  surface — **do not widen the bind casually**, which matters more since *(v0.8.1)* it also writes.
+  The browser never talks to ArcadeDB directly; that is what keeps the password server-side.
+- The one deliberate exception is **`--tailscale`**: it binds the machine's Tailscale IP
+  and serves HTTPS with a `tailscale`-issued cert for the node's MagicDNS name
+  ([`scripts/tailscale.py`](scripts/tailscale.py)), and nothing else — a raw `--host 0.0.0.0` is
+  still unsupported and still the wrong move. No fallback to a self-signed cert on failure: if
+  Tailscale is unavailable, `--tailscale` errors out rather than serving weaker TLS.
 - Its **writes are guarded against the browser itself**, not just the network: `Host` must name the
   server (so a DNS name resolving to `127.0.0.1` does not qualify), `Origin` must be us when sent,
   and every write must carry `Content-Type: application/json` and `X-Indexia-Write`. Those last two
   are unsettable cross-origin without a CORS preflight, and no `OPTIONS` is answered — **adding a
   `do_OPTIONS` handler would silently undo this.** Bodies are capped at 1 MiB, refused on the
   declared `Content-Length` before a byte is read. Run `ui.sh run --read-only` to drop the write
-  surface entirely.
+  surface entirely. Under `--tailscale`, the same `Host`/`Origin` check accepts exactly one more
+  name — the provisioned FQDN — never a wildcard, so this guarantee holds on the tailnet too.
 
 ## Layout
 
@@ -1130,6 +1150,7 @@ staging/  drop zone for typed note files (README tracked; drops gitignored)
           transcripts/  audio-transcript inbox for the review-transcripts skill (README tracked; transcripts gitignored)
 recent/   generated digests: recent-notes.md, provocations.md, resurface.md (gitignored, overwritten)
 certs/    keystore.p12   (gitignored)
+          tailscale/  cert.pem · key.pem, re-provisioned each --tailscale run (gitignored)
 data/     ArcadeDB databases   (gitignored, bind mount)
 backups/  backup zips          (gitignored, bind mount)
 docs/     spec.md
