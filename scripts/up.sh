@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 # Start the ArcadeDB container, wait until ready, and apply the schema.
+#   up.sh              loopback only (default)
+#   up.sh --tailscale  ADDS a second publish of the HTTPS port (2480 only — the binary
+#                       protocol, 2424, is never touched) on this machine's Tailscale IP,
+#                       alongside the usual loopback one, and switches to a tailscale-issued
+#                       cert instead of the self-signed dev one, so Studio/REST is reachable —
+#                       and trusted, no browser warning — from another device on the tailnet.
+#                       Loopback keeps working unmodified: every local script that defaults to
+#                       https://localhost:PORT (search.sh, add-note.sh, the graph UI backend,
+#                       …) is unaffected. See README "Serving ArcadeDB over Tailscale" and
+#                       scripts/tailscale.py. Nothing here is persisted in .env: a plain
+#                       `up.sh` next time drops the tailnet publish again.
 # (Nightly backups run automatically via the built-in scheduler — see docker/backup.json.)
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -10,12 +21,31 @@ load_env
 mkdir -p "$ROOT/data" "$ROOT/backups" "$ROOT/certs"
 [[ -f "$ROOT/certs/keystore.p12" ]] || { log "no keystore found — generating"; bash "$ROOT/scripts/gen-cert.sh"; }
 
+if [[ "${1:-}" == "--tailscale" ]]; then
+  log "provisioning a Tailscale cert for the DB's HTTPS endpoint"
+  bash "$ROOT/scripts/gen-cert.sh" --tailscale || die "tailscale cert provisioning failed"
+  export INDEXIA_HTTP_BIND; INDEXIA_HTTP_BIND="$(tailscale ip -4)" || die "tailscale ip -4 failed — is tailscale up?"
+  export INDEXIA_KEYSTORE="tailscale/keystore.p12"
+  export INDEXIA_COMPOSE_OVERLAY="$ROOT/docker/docker-compose.tailscale.yml"
+  fqdn="$(tailscale_fqdn)"; [[ -n "$fqdn" ]] || die "could not read this node's MagicDNS name"
+  db_mode_write tailscale
+  log "adding HTTPS (2480) on $INDEXIA_HTTP_BIND ($fqdn) — loopback stays up too; binary protocol (2424) stays loopback-only"
+elif [[ -n "${1:-}" ]]; then
+  die "usage: up.sh [--tailscale]"
+else
+  db_mode_write loopback
+fi
+
 log "starting ArcadeDB (docker compose up -d)"
 dc up -d
 
 log "waiting for the server to become ready…"
 wait_ready 60 || { dc logs --tail 50 arcadedb; die "server did not become ready — see logs above"; }
-ok "server ready — Studio/REST at $BASE_URL (user: root)"
+if [[ "${1:-}" == "--tailscale" ]]; then
+  ok "server ready — Studio/REST at $BASE_URL (user: root), and also at https://$fqdn:${INDEXIA_HTTP_PORT:-2480}"
+else
+  ok "server ready — Studio/REST at $BASE_URL (user: root)"
+fi
 
 bash "$ROOT/scripts/apply-ddl.sh"
 

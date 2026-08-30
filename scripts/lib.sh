@@ -25,8 +25,16 @@ load_env() {
   BASE_URL="${INDEXIA_URL:-https://localhost:${INDEXIA_HTTP_PORT:-2480}}"   # re-derive after .env may set the port
 }
 
-# docker compose wrapper. -f sets the project dir to docker/, so ../data etc. resolve to the repo root.
-dc() { docker compose -f "$COMPOSE_FILE" "$@"; }
+# docker compose wrapper. -f sets the project dir to docker/, so ../data etc. resolve to the repo
+# root. Set INDEXIA_COMPOSE_OVERLAY to merge in a second -f file — up.sh's --tailscale branch is
+# the only caller that does, for docker-compose.tailscale.yml; every other script (down.sh,
+# status.sh, console.sh, …) leaves it unset and gets the base file alone, which is enough to
+# operate on the already-named container regardless of which files started it.
+dc() {
+  local extra=()
+  [[ -n "${INDEXIA_COMPOSE_OVERLAY:-}" ]] && extra=(-f "$INDEXIA_COMPOSE_OVERLAY")
+  docker compose -f "$COMPOSE_FILE" "${extra[@]}" "$@"
+}
 
 # POST to the DB HTTP API. Prints response body; returns non-zero on HTTP >= 400.
 # Usage: db_post <url> [json-body]
@@ -53,6 +61,27 @@ db_get() {
 sqlscript_payload() {
   python3 -c 'import json,sys; print(json.dumps({"language":"sqlscript","command":sys.stdin.read()}))'
 }
+
+# ---- Tailscale (shared by ui.sh, up.sh, status.sh — see scripts/tailscale.py) ----------------
+# This node's MagicDNS FQDN, or empty if tailscale is down/unreachable. Read-only: no cert is
+# provisioned here, just the name a provisioned one would be issued for.
+tailscale_fqdn() {
+  tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get("Self", {}).get("DNSName", "").rstrip("."))
+except Exception:
+    pass
+'
+}
+
+# The DB's serving mode ("loopback" or "tailscale"), a plain marker file next to the daemon pid
+# files rather than anything docker-compose itself remembers — a resolved port binding tells a
+# fresh shell (status.sh) nothing about how it got that way. Written by up.sh, read by status.sh.
+DB_MODE_FILE="${INDEXIA_RUN_DIR:-$HOME/.indexia}/db-mode"
+db_mode_write() { mkdir -p "$(dirname "$DB_MODE_FILE")"; printf '%s\n' "$1" >"$DB_MODE_FILE"; }
+db_mode_read() { cat "$DB_MODE_FILE" 2>/dev/null || echo "loopback"; }
 
 # ---- daemon process tracking ------------------------------------------------
 # One pid file per daemon, so start/stop/status name exactly one process.

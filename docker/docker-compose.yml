@@ -1,10 +1,18 @@
 # Indexia — containerized ArcadeDB server (v1 runtime).
-# Local-first, single-user, loopback-only, TLS on. See docs/spec.md §9/§12 and
+# Local-first, single-user, loopback-only by default, TLS on. See docs/spec.md §9/§12 and
 # the plan at .claude/plans/read-through-the-spec-dazzling-torvalds.md.
 #
 # Secrets come from ./.env (gitignored). Copy .env.example → .env first.
 # Bind-mount dirs (../data, ../backups, ../certs) are created by scripts/up.sh
 # (or `mkdir` them) before first boot, and ../certs must contain keystore.p12.
+#
+# INDEXIA_KEYSTORE (optional, default keystore.p12) is set by `scripts/up.sh --tailscale`
+# alone, never persisted in .env — see README "Serving ArcadeDB over Tailscale". `--tailscale`
+# ADDS a second publish of the HTTPS port on the tailnet IP via docker-compose.tailscale.yml
+# (compose merges `ports` lists across -f files); the loopback line below stays put either way,
+# so every local script that defaults to https://localhost:PORT keeps working unmodified. The
+# binary protocol port is NOT parameterized anywhere: it stays loopback-only unconditionally,
+# by construction rather than by convention.
 name: indexia
 
 services:
@@ -17,16 +25,16 @@ services:
         -Xms${ARCADEDB_HEAP:-1G} -Xmx${ARCADEDB_HEAP:-1G}
         -Darcadedb.server.rootPassword=${ARCADEDB_ROOT_PASSWORD}
         -Darcadedb.ssl.enabled=true
-        -Darcadedb.ssl.keyStore=/home/arcadedb/certs/keystore.p12
+        -Darcadedb.ssl.keyStore=/home/arcadedb/certs/${INDEXIA_KEYSTORE:-keystore.p12}
         -Darcadedb.ssl.keyStorePassword=${ARCADEDB_KEYSTORE_PASSWORD}
-        -Darcadedb.ssl.trustStore=/home/arcadedb/certs/keystore.p12
+        -Darcadedb.ssl.trustStore=/home/arcadedb/certs/${INDEXIA_KEYSTORE:-keystore.p12}
         -Darcadedb.ssl.trustStorePassword=${ARCADEDB_KEYSTORE_PASSWORD}
         -Darcadedb.server.httpsIncomingPort=2480
         -Darcadedb.server.httpIncomingPort=2481
         -Darcadedb.server.backupDirectory=/home/arcadedb/backups
     ports:
-      - "127.0.0.1:${INDEXIA_HTTP_PORT:-2480}:2480"     # HTTPS API + Studio — loopback only
-      - "127.0.0.1:${INDEXIA_BINARY_PORT:-2424}:2424"   # binary protocol   — loopback only
+      - "127.0.0.1:${INDEXIA_HTTP_PORT:-2480}:2480"     # HTTPS API + Studio — loopback, always
+      - "127.0.0.1:${INDEXIA_BINARY_PORT:-2424}:2424"   # binary protocol   — loopback, always
     volumes:
       - ../data:/home/arcadedb/databases        # corpus persistence
       - ../backups:/home/arcadedb/backups       # BACKUP DATABASE output
