@@ -1,0 +1,18 @@
+# Overlay merged in by `scripts/up.sh --tailscale` alone (docker compose -f docker-compose.yml
+# -f docker-compose.tailscale.yml). Never invoked directly — see scripts/up.sh and README
+# "Serving ArcadeDB over Tailscale".
+#
+# Compose merges `ports` lists across -f files (they're additive, not a replace), so this ADDS a
+# second publish of the HTTPS port on the tailnet IP — the base file's loopback publish of the
+# same container port stays, so every local script that defaults to https://localhost:PORT
+# keeps working unmodified while the tailnet also gets in. `INDEXIA_HTTP_BIND` has no default
+# here on purpose: this file is only ever loaded by up.sh's --tailscale branch, which always
+# sets it (to `tailscale ip -4`) before calling `dc up -d` — an unset value here would mean
+# something upstream already failed to die as it should have.
+#
+# The binary protocol port is untouched — it does not appear in this file at all, so there is
+# no way for this overlay to widen it even by mistake.
+services:
+  arcadedb:
+    ports:
+      - "${INDEXIA_HTTP_BIND}:${INDEXIA_HTTP_PORT:-2480}:2480"

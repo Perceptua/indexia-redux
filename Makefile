@@ -46,8 +46,8 @@ help: ## Show this help
 
 ##@ Lifecycle (DB + daemons)
 
-up: ## Start ArcadeDB, apply schema, start embedder/worker/scheduler
-	bash scripts/up.sh
+up: ## Start ArcadeDB, apply schema, start embedder/worker/scheduler (ARGS=--tailscale for Studio/REST over the tailnet)
+	bash scripts/up.sh $(ARGS)
 
 down: ## Stop ArcadeDB (./data persists)
 	bash scripts/down.sh

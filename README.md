@@ -54,6 +54,19 @@ below). The cert is self-signed, so accept it in the browser or use `curl -k`.
 > `127.0.0.1` only. This checkout overrides them to **`12480` / `12424`** in `docker/.env`
 > (`INDEXIA_HTTP_PORT` / `INDEXIA_BINARY_PORT`) to avoid clashing with another local ArcadeDB.
 
+**Serving ArcadeDB over Tailscale.** `bash scripts/up.sh --tailscale` (or `make up
+ARGS=--tailscale`) *adds* a second publish of **HTTPS/Studio (2480) only** on this machine's
+Tailscale IP, serving it with a `tailscale`-issued cert for the node's MagicDNS name — so
+Studio/REST is reachable, and trusted with no browser warning, from another device on the
+tailnet. The loopback publish stays up alongside it, unmodified, so every local script that
+defaults to `https://localhost:2480` (`search.sh`, `add-note.sh`, the graph UI backend, …) keeps
+working exactly as before. The **binary protocol (2424) always stays loopback-only**, with no
+flag able to widen it. This holds the same root password that guards the DB either way —
+Tailscale changes who can *reach* the login prompt, not whether one still stands there — so treat
+it the same as any other credential exposed to your tailnet. Nothing here is persisted in
+`docker/.env`: a plain `bash scripts/up.sh` next time drops the tailnet publish again, and
+`scripts/status.sh` reports whether it's currently there. See Security posture below.
+
 ## Guided tour — exercise every feature
 
 A runnable end-to-end pass through the whole system. Each step links to its detailed section below.
@@ -124,7 +137,7 @@ Each capability has a fuller how-to below: [Ingestion](#ingestion) · [Embedding
 
 | Script | What it does |
 |--------|--------------|
-| `up.sh` | Start, wait for readiness, apply schema, start the embedder + worker + maintenance scheduler, refresh the recent-notes digest. (Nightly backups run automatically — see Backups.) |
+| `up.sh [--tailscale]` | Start, wait for readiness, apply schema, start the embedder + worker + maintenance scheduler, refresh the recent-notes digest. (Nightly backups run automatically — see Backups.) `--tailscale` adds Studio/REST (2480 only) over the tailnet, alongside loopback — see [Security posture](#security-posture). |
 | `down.sh [--backup] [--reset]` | Stop. `--backup` first; `--reset` wipes `./data` + `./backups` (destructive). |
 | `status.sh` | Container state + server readiness + database list. |
 | `logs.sh [N]` | Follow server logs (last `N` lines, default 100). |
@@ -159,7 +172,7 @@ Each capability has a fuller how-to below: [Ingestion](#ingestion) · [Embedding
 | `embed-worker.sh [start\|stop\|status\|run]` | Background worker that embeds pending notes (async embed-on-commit). |
 | `embed-backfill.sh [--limit N] [--dry-run]` | One-shot: embed any notes still lacking an embedding. |
 | `new-id.sh [N]` | Mint N fresh, unique spec §4 note ids (used by the transcribe-notes skill). |
-| `gen-env.sh` / `gen-cert.sh` | (Re)generate dev secrets / TLS keystore. |
+| `gen-env.sh` / `gen-cert.sh [--force\|--tailscale]` | (Re)generate dev secrets / TLS keystore. `--tailscale` provisions a tailscale-issued keystore alongside the self-signed one, for `up.sh --tailscale`. |
 
 ## Schema
 
@@ -1027,6 +1040,7 @@ Day-to-day operation and looking under the hood.
 | Task | Command |
 |------|---------|
 | Start / stop the stack | `bash scripts/up.sh` · `bash scripts/down.sh` (`--backup`, `--reset`) |
+| Also serve Studio/REST over Tailscale | `bash scripts/up.sh --tailscale` — adds the tailnet alongside loopback; binary protocol (2424) stays loopback-only either way |
 | Health check | `bash scripts/status.sh` — containers, readiness, database list |
 | Follow logs | `bash scripts/logs.sh [N]` — last `N` lines of the server log (default 100) |
 | Interactive SQL | `bash scripts/console.sh` — an ArcadeDB SQL prompt against `indexia` |
@@ -1110,11 +1124,24 @@ has never reproduced.
 
 ## Security posture
 
-- **Loopback-only** (`127.0.0.1`) port binds; the DB is never on the LAN.
+- **Loopback-only** (`127.0.0.1`) port binds by default; the DB is never on the LAN.
 - **TLS on** (self-signed keystore, gitignored under `certs/`).
 - Only HTTP(S) + binary ports published; Postgres/Gremlin/Mongo/Redis plugins are **off**.
 - Secrets live in `docker/.env` (gitignored, `0600`). They are auto-generated dev values; the root
   password only takes effect on a **fresh** `./data` (reset with `down.sh --reset` to rotate).
+- The one deliberate exception to loopback-only is `up.sh --tailscale`
+  ([`scripts/tailscale.py`](scripts/tailscale.py)): it *adds* a second publish of **HTTPS/Studio
+  (2480) only** on this machine's Tailscale IP, with a `tailscale`-issued cert — the loopback
+  publish stays up too (`docker-compose.tailscale.yml` merges an extra `ports` entry rather than
+  replacing the base file's), so local tooling is unaffected. **The binary protocol (2424) is
+  never parameterized** — it doesn't appear in the overlay at all, so there is no flag that could
+  widen it even by mistake. Unlike the graph UI's guarded write surface, ArcadeDB itself has no
+  equivalent CSRF-style guard — root-password auth over HTTPS is the entire boundary, exactly as
+  it is on loopback today, so a device on your tailnet that has (or guesses) that password gets
+  the same direct read/write access to the whole graph a local `curl` would. Nothing is persisted
+  in `.env`: a plain `up.sh` next time drops the tailnet publish. No fallback to a self-signed
+  cert on failure — if Tailscale is unavailable, `--tailscale` errors out rather than serving
+  weaker TLS.
 - The **graph UI** (`ui.sh`) holds the root DB password and serves note bodies over **plain HTTP**
   by default. It binds `127.0.0.1` only and has no authentication, because it has no non-loopback
   surface — **do not widen the bind casually**, which matters more since *(v0.8.1)* it also writes.
@@ -1136,7 +1163,8 @@ has never reproduced.
 ## Layout
 
 ```
-docker/   docker-compose.yml · backup.json · .env.example (.env is generated, gitignored)
+docker/   docker-compose.yml · docker-compose.tailscale.yml (--tailscale overlay) · backup.json
+          .env.example (.env is generated, gitignored)
 ddl/      schema.sql
 scripts/  all tooling — thin *.sh wrappers over the shared Python core (lib.sh + notelib.py)
           analytics/  the read-only report layer (spec §13) — imports notelib, never writes
@@ -1150,7 +1178,8 @@ staging/  drop zone for typed note files (README tracked; drops gitignored)
           transcripts/  audio-transcript inbox for the review-transcripts skill (README tracked; transcripts gitignored)
 recent/   generated digests: recent-notes.md, provocations.md, resurface.md (gitignored, overwritten)
 certs/    keystore.p12   (gitignored)
-          tailscale/  cert.pem · key.pem, re-provisioned each --tailscale run (gitignored)
+          tailscale/  cert.pem · key.pem · keystore.p12, re-provisioned each --tailscale
+                      run (UI and DB share the same FQDN's cert; gitignored)
 data/     ArcadeDB databases   (gitignored, bind mount)
 backups/  backup zips          (gitignored, bind mount)
 docs/     spec.md
