@@ -338,6 +338,14 @@ export const Graph = {
     cy.animate({ fit: { eles: vis.length ? vis : cy.nodes(), padding: 48 } }, { duration: 180 });
   },
 
+  /* Tell Cytoscape its container changed size. cy's own autoResize only listens for the window
+   * resizing; a grid-track change (the panel opening, narrow mode taking over the layout) resizes
+   * #cy without resizing the window, and cy's canvas keeps stale pixel dimensions until told
+   * otherwise — no re-layout, no fit(), positions must not move because of this. */
+  resize() {
+    if (cy) cy.resize();
+  },
+
   /* Frame a specific set of nodes regardless of `display` — a community from the status panel is
    * corpus-wide (spec §13.2) and can easily span outside the current window, so this animates to
    * wherever the members actually are rather than only what `fit()`'s :visible would catch. */

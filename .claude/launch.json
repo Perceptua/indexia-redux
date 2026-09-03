@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "indexia-ui",
+      "runtimeExecutable": "wsl",
+      "runtimeArgs": ["-d", "ubuntu", "--", "bash", "-lc", "cd /home/aphorikles/indexia && exec scripts/ui.sh run"],
+      "port": 8420
+    }
+  ]
+}

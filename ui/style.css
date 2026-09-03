@@ -413,3 +413,16 @@ body.writing #panel { opacity: 0.55; pointer-events: none; }
 #toast[hidden] { display: none; }
 #toast.bad { border-color: var(--critical); }
 #toast .wr { margin-left: 8px; }
+
+/* ---- narrow layout (ui/app.js NARROW_QUERY — keep the two in sync) --------
+   Below the breakpoint, #filters and #panel take over the full track in turn (widths computed
+   in app.js; no grid-template-columns override needed here — the graph's own minmax(0, 1fr)
+   track absorbs the rest). This block covers only what CSS alone decides: which header controls
+   exist at all. walk needs the graph and the detail pane visible together (its whole point is
+   watching the trail while you read), and queue/staging (uploads, the ratification backlog) are
+   deliberately desktop-only tasks — narrower than "no room", a decision, not a fallback. Applies
+   regardless of the `hidden` attribute write.js also toggles on these three (--read-only vs.
+   writable): whichever rule already says display:none, this one agrees. */
+@media (max-width: 700px) {
+  #walk, [data-panel-source="queue"], [data-panel-source="staging"] { display: none; }
+}
