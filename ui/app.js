@@ -26,6 +26,11 @@ const PANEL_DEFAULT = 380;
 const PANEL_MIN = 320;
 const PANEL_MAX = 640;
 const CY_MIN = 240;   // the graph itself never yields past this, however far a pane is dragged
+/* Below this, PANEL_MIN (320) already exceeds CY_MIN's own headroom on a typical phone width —
+ * the two constants above were never meant to coexist with the graph on the same screen. Narrow
+ * mode does not resize around that; it takes over the layout so only one of {filters, graph,
+ * panel} is ever asking for space at once. */
+const NARROW_QUERY = '(max-width: 700px)';
 /* The payload shape this page knows how to read (scripts/ui.py CONTRACT_VERSION). Checked
  * because the page is long-lived — a tab left open across an upgrade would otherwise go on
  * filtering a shape that has moved, and now also POSTing against it. */
@@ -62,6 +67,10 @@ const main = $('main');
 const filtersEl = $('#filters');
 const filtersHandle = $('#filters-resizer');
 const panelHandle = $('#panel-resizer');
+const cyEl = $('#cy');
+
+const narrowMQ = window.matchMedia(NARROW_QUERY);
+const isNarrow = () => narrowMQ.matches;
 
 const esc = (s) => String(s === null || s === undefined ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -218,6 +227,38 @@ function wire() {
   loadPaneState();
   applyFiltersWidth();
   applyPanelWidth();
+
+  // Crossing the breakpoint mid-session (a rotated phone, a resized window) has to redrive both
+  // appliers, not just the CSS — the panel's narrow width is computed from live layout
+  // (applyPanelWidth), not a media query, so nothing here happens on its own. `resize` rather
+  // than narrowMQ's own `change` event: verified against this page that a devtools/CDP viewport
+  // override does not reliably fire MediaQueryList's `change` on every transition, even though
+  // `.matches` itself reads correctly the moment something else asks — `resize` is the one signal
+  // guaranteed to fire on every viewport-dimension change, including a real device rotation.
+  window.addEventListener('resize', () => {
+    applyFiltersWidth();
+    applyPanelWidth();
+  });
+
+  // A grid-track resize (opening/closing the panel, crossing the breakpoint) resizes #cy's
+  // container without resizing the window, and Cytoscape's own autoResize only listens for the
+  // latter — leaving its canvas at stale pixel dimensions. cy.resize() only, never fit() or a
+  // re-layout: this must not disturb the positions the reader has dragged into place.
+  new ResizeObserver(() => Graph.resize()).observe(cyEl);
+
+  // Narrow mode only: a second tap on the panel button that is already open closes it, since the
+  // panel is the whole screen there and the small `×` is otherwise the only way out. Desktop
+  // keeps today's open-only behavior — a capturing listener here runs before each panel module's
+  // own bubbling click handler, so it can short-circuit before that handler reopens the same
+  // panel with a fresh render.
+  $('#bar').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-panel-source]');
+    if (!btn || !isNarrow()) return;
+    if (btn.getAttribute('aria-pressed') === 'true') {
+      e.stopPropagation();
+      clearSelection();
+    }
+  }, true);
 
   $('#togglefilters').addEventListener('click', () => {
     filtersOpen = !filtersOpen;
@@ -660,6 +701,7 @@ function openPanel(html, source) {
   panel.innerHTML = html;
   panel.hidden = false;
   applyPanelWidth();
+  applyFiltersWidth();   // panel opening narrow forces the rail closed — see applyFiltersWidth
   panel.scrollTop = 0;
   panel.querySelector('.close').addEventListener('click', clearSelection);
   panel.querySelectorAll('.note-link').forEach((b) => b.addEventListener('click', () => {
@@ -674,6 +716,7 @@ function closePanel() {
   Link.close();
   panel.hidden = true;
   applyPanelWidth();
+  applyFiltersWidth();   // hands the rail back exactly as the reader left it — see applyFiltersWidth
   setPanelSource();
 }
 
@@ -882,14 +925,25 @@ function loadPositions() {
  * showing whatever the reader selects next rather than standing open on what they had open last.
  */
 function applyFiltersWidth() {
-  main.style.setProperty('--filters-width', `${filtersOpen ? filtersWidth : 0}px`);
-  main.style.setProperty('--filters-handle', filtersOpen ? '6px' : '0px');
-  filtersEl.hidden = !filtersOpen;
-  filtersHandle.hidden = !filtersOpen;
+  const narrow = isNarrow();
+  const panelOpenNarrow = narrow && !panel.hidden;
+  // `filtersOpen` stays the reader's real preference even while it is visually overridden below
+  // — nothing here writes it, so a panel opened on a phone and later closed hands the rail back
+  // exactly as it was, and desktop is untouched (panelOpenNarrow is always false there).
+  const effOpen = filtersOpen && !panelOpenNarrow;
+  main.style.setProperty('--filters-width', `${effOpen ? filtersWidth : 0}px`);
+  main.style.setProperty('--filters-handle', effOpen && !narrow ? '6px' : '0px');
+  filtersEl.hidden = !effOpen;
+  // A drag handle for a pane that is either 0 or the whole screen has nothing to do — narrow
+  // mode retires both resizers regardless of open state.
+  filtersHandle.hidden = !effOpen || narrow;
   filtersHandle.setAttribute('aria-valuemin', String(FILTERS_MIN));
   filtersHandle.setAttribute('aria-valuemax', String(FILTERS_MAX));
   filtersHandle.setAttribute('aria-valuenow', String(filtersWidth));
   const btn = $('#togglefilters');
+  // Nothing to toggle onto screen while the panel fills it, so the control itself steps aside
+  // rather than sitting there offering a chevron that would do nothing visible.
+  btn.hidden = panelOpenNarrow;
   const label = filtersOpen ? 'Hide the view & filters pane' : 'Show the view & filters pane';
   btn.textContent = filtersOpen ? '‹' : '›';
   btn.setAttribute('aria-pressed', String(filtersOpen));
@@ -898,10 +952,16 @@ function applyFiltersWidth() {
 }
 
 function applyPanelWidth() {
+  const narrow = isNarrow();
   const open = !panel.hidden;
-  main.style.setProperty('--panel-width', `${open ? panelWidth : 0}px`);
-  main.style.setProperty('--panel-handle', open ? '6px' : '0px');
-  panelHandle.hidden = !open;
+  // On narrow, the panel does not grow toward a stored preference — it takes the full track,
+  // computed from the live layout rather than PANEL_DEFAULT/PANEL_MIN/PANEL_MAX, which describe
+  // a desktop-sized pane and are never applied here. The graph's `minmax(0, 1fr)` track absorbs
+  // the rest by shrinking toward 0 — no separate narrow grid template needed.
+  const width = open ? (narrow ? Math.round(main.getBoundingClientRect().width) : panelWidth) : 0;
+  main.style.setProperty('--panel-width', `${width}px`);
+  main.style.setProperty('--panel-handle', open && !narrow ? '6px' : '0px');
+  panelHandle.hidden = !open || narrow;
   panelHandle.setAttribute('aria-valuemin', String(PANEL_MIN));
   panelHandle.setAttribute('aria-valuemax', String(PANEL_MAX));
   panelHandle.setAttribute('aria-valuenow', String(panelWidth));
