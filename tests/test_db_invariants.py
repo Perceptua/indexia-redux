@@ -32,7 +32,7 @@ lib.require(db, "the ArcadeDB invariants", notes=2, binds=1)
 
 with lib.corpus_guard(db):
     # --- an un-LIMITed SELECT must return every row -------------------------------------------
-    # notelib scans whole types un-LIMITed in several places (move6_candidates over all Notes,
+    # notelib scans whole types un-LIMITed in several places (move5_candidates over all Notes,
     # _intra_cluster_edges, _undirected_adjacency, knn_cache_status). If the API ever capped rows,
     # all of those would silently see a prefix of the corpus.
     for typ, col in (("BINDS", "status"), ("Note", "id"), ("Op", "id")):

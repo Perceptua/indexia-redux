@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Calibration tool (not a test): what do move-1 and move-2 scores actually look like on this corpus?
+"""Calibration tool (not a test): what do move-1 scores actually look like on this corpus?
 
 The digest's staging floor (`provocation_digest.STAGE_MIN_SCORE`) only makes sense relative to the
 scores a real corpus produces. Set it in the abstract and you get one of two failures: too low and the
@@ -40,19 +40,15 @@ def report(label, scores, higher_is_better):
 def main():
     db = notelib.Arcade()
     seeds = pd._seeds(db, 10)
-    m1, m2 = [], []
+    m1 = []
     for sid in seeds:
-        for move, sink in ((notelib.move1_candidates, m1), (notelib.move2_candidates, m2)):
-            try:
-                sink += [c["score"] for c in move(db, sid, k=5)]
-            except (ValueError, notelib.EmbedderError):
-                pass
+        try:
+            m1 += [c["score"] for c in notelib.move1_candidates(db, sid, k=5)]
+        except (ValueError, notelib.EmbedderError):
+            pass
     print(f"{len(seeds)} seed(s); shipped floor = {pd.STAGE_MIN_SCORE}, "
           f"cap = {pd.STAGE_CAP}/run\n")
     report("move 1 — similarity (higher is nearer, the floor applies here)", m1, True)
-    print()
-    report("move 2 — cosine read as distance (lower is further apart; its own max_score caps it)",
-           m2, False)
 
 
 if __name__ == "__main__":

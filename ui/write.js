@@ -253,10 +253,62 @@ function edit(noteId) {
     }));
 }
 
-// ---- the ratification queue ------------------------------------------------
+// ---- the ratification queue, and the other five moves ----------------------
+/* Only move 1 (semantically near, graph-far) ever writes a SUGGEST_LINK on its own (spec
+ * §8.2). Move 2 (bridge candidates) proposes an actual link too, in the sense that a bridge
+ * note is exactly the kind of thing worth `link.sh suggest`-ing by hand, so it shares the top
+ * section with move 1 rather than joining the read-only ones below — but nothing stages it
+ * automatically. Moves 3, 4 and 6 are write-a-note prompts (a theme, a tension, a debt) and
+ * move 5 is a note to revisit, not a link to decide; none of the four has a verdict to
+ * render. They still belong in this panel — it is where a reader comes looking for what the
+ * corpus wants next — so they render read-only, straight off /api/provocations (the same read
+ * the nightly digest does, on demand: scripts/provocation_digest.py build()).
+ *
+ * .note-link buttons are wired for free by app.js's openPanel (the same shape the detail
+ * panel and status.js use) — no listener needed here, clicking one just selects the note. */
+const noteChip = (id, title) => `<button type="button" class="note-link"
+  data-id="${ctx.esc(id)}">${ctx.esc(title || ctx.labelOf(id))}</button>`;
+
+function bridgeRows(cands) {
+  return cands.map((c) => `<div class="qrow">
+    <p class="rationale">spans ${c.spans} communities, degree ${c.degree} — a candidate bridge,
+      not yet suggested as a link</p>
+    ${noteChip(c.id, c.title)}</div>`).join('');
+}
+
+function themeRows(themes) {
+  return themes.map((t) => `<div class="qrow">
+    <p class="rationale">an unnamed theme running through ${t.size} notes — write a hub/structure
+      note?</p>
+    ${t.members.map((m) => noteChip(m.id, m.title)).join('')}</div>`).join('');
+}
+
+function contradictionRows(pairs) {
+  return pairs.map((p) => `<div class="qrow">
+    ${noteChip(p.new, p.new_title)} <span class="muted">corrects</span> ${noteChip(p.old, p.old_title)}
+    ${p.reason ? `<p class="rationale">${ctx.esc(p.reason)}</p>` : ''}</div>`).join('');
+}
+
+function debtRows(items) {
+  return items.map((r) => `<div class="qrow">
+    <p class="rationale">${ctx.esc(r.prompt)}</p>
+    ${noteChip(r.id, r.label)}</div>`).join('');
+}
+
+function revisitRows(m5) {
+  const bucket = (label, items) => (items.length
+    ? `<p class="hint">${label}</p>${items.map((c) => noteChip(c.id, c.title)).join('')}` : '');
+  return bucket('orphans — no ratified link yet', m5.orphans)
+    + bucket('inhibited — corrected, still re-encounterable', m5.inhibited)
+    + bucket('on this day', m5.on_this_day);
+}
+
 async function queue() {
-  const res = await fetch('/api/links?status=suggested');
-  const data = res.ok ? await res.json() : { links: [] };
+  const [linkRes, provRes] = await Promise.all([
+    fetch('/api/links?status=suggested'), fetch('/api/provocations'),
+  ]);
+  const data = linkRes.ok ? await linkRes.json() : { links: [] };
+  const prov = provRes.ok ? await provRes.json() : null;
   const label = (id, title) => ctx.esc(title || ctx.labelOf(id));
   const rows = data.links.map((l) => `<div class="qrow">
     <button type="button" class="claim link" data-a="${ctx.esc(l.a)}" data-b="${ctx.esc(l.b)}"
@@ -269,12 +321,30 @@ async function queue() {
       ${button('reject', { 'data-a': l.a, 'data-b': l.b }, 'reject')}
     </div></div>`);
 
+  const bridgeBlock = prov ? bridgeRows(prov.move2) : '';
+  const writeRows = prov ? themeRows(prov.move3) + contradictionRows(prov.move4)
+    + debtRows(prov.move6) : '';
+  const revisitBlock = prov ? revisitRows(prov.move5) : '';
+
   ctx.openPanel(`
     <button type="button" class="close" title="Close (Esc)">×</button>
     <div class="kind">ratification queue</div>
     <h2>${data.links.length} suggested bind${data.links.length === 1 ? '' : 's'}</h2>
-    ${rows.length ? rows.join('') : '<p class="muted">Nothing waiting. Suggestions come from the '
-      + 'provocation digest, and from the "near in meaning, not linked" list on any note.</p>'}
+    <p class="hint">near-but-graph-far suggestions (move 1) await a verdict below; bridge
+      candidates (move 2) are read-only until you suggest one yourself</p>
+    ${rows.length ? rows.join('') : ''}${bridgeBlock}
+    ${rows.length || bridgeBlock ? '' : '<p class="muted">Nothing waiting. Suggestions come from '
+      + 'the provocation digest, and from the "near in meaning, not linked" list on any note.</p>'}
+
+    <h3>notes to write</h3>
+    <p class="hint">implicit themes, tensions to reconcile, and structural debt (moves 3, 4 &amp; 6)
+      — each names a site to write from, never a claim to make</p>
+    ${writeRows || '<p class="muted">Nothing surfaced right now.</p>'}
+
+    <h3>suggested revisits</h3>
+    <p class="hint">orphaned, corrected, and anniversary notes (move 5)</p>
+    ${revisitBlock || '<p class="muted">Nothing surfaced right now.</p>'}
+
     <footer>the machine proposes, you dispose (spec §8.2) — a verdict on an
       <strong>inhibits</strong> bind asserts that the first note corrects the second</footer>`, 'queue');
 

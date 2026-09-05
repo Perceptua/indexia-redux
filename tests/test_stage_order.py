@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """provocation_digest._stage_order — which candidates reach the ratification queue, in what order.
 
-Worth pinning down in a unit test because the live corpus cannot exercise it: it yields no move-2
-candidates at all (every same-day note is either already linked or too similar to clear move 2's
-max_score), so the interleave is invisible in integration. The subtle invariant is that moves 1 and 2
-score on **opposite axes** — move 1's score is similarity (high = nearer = better), move 2's is the
-same cosine read as distance (low = further apart = better) — so a single ranking or a shared floor
-would silently silence move 2. No database needed.
+Since move 2 (temporally adjacent, otherwise distant) was removed, staging is single-axis: move 1's
+score is similarity (high = nearer = better), so candidates are simply ranked by score descending
+across all seeds, floored at min_score. No database needed.
 """
 import lib
 
@@ -22,44 +19,27 @@ def ids(order):
     return [c["id"] for _seed, c in order]
 
 
-# --- the floor applies to move 1 only ---------------------------------------------------------
+# --- the floor applies to move 1 -------------------------------------------------------------
 order = pd._stage_order([{"seed": "S1",
-                          "move1": [cand("a", 0.90), cand("b", 0.72), cand("c", 0.40)],
-                          "move2": [cand("x", 0.10), cand("y", 0.45)]}], 0.70)
-check("a move-1 candidate below the floor is dropped; move-2 is never floored",
-      ids(order) == ["a", "x", "b", "y"], str(ids(order)))
+                          "move1": [cand("a", 0.90), cand("b", 0.72), cand("c", 0.40)]}], 0.70)
+check("a candidate below the floor is dropped",
+      ids(order) == ["a", "b"], str(ids(order)))
 
-# --- each move ranked on its own axis ---------------------------------------------------------
+# --- ranked by similarity descending -----------------------------------------------------------
 order = pd._stage_order([{"seed": "S1",
-                          "move1": [cand("m1lo", 0.75), cand("m1hi", 0.95)],
-                          "move2": [cand("m2far", 0.05), cand("m2near", 0.49)]}], 0.70)
-check("move 1 ranks similarity descending, move 2 ranks distance ascending",
-      ids(order) == ["m1hi", "m2far", "m1lo", "m2near"], str(ids(order)))
-
-# --- one move running dry must not truncate the other -----------------------------------------
-order = pd._stage_order([{"seed": "S1",
-                          "move1": [cand("a", 0.9), cand("b", 0.8), cand("c", 0.75)],
-                          "move2": [cand("x", 0.2)]}], 0.70)
-check("move 2 running dry does not cut move 1 short",
-      ids(order) == ["a", "x", "b", "c"], str(ids(order)))
-
-# --- a shared cap splits between the moves rather than starving one ---------------------------
-order = pd._stage_order([{"seed": "S1",
-                          "move1": [cand(f"m1_{i}", 0.9 - i / 100) for i in range(10)],
-                          "move2": [cand(f"m2_{i}", i / 100) for i in range(10)]}], 0.70)
-check("under a cap of 4 both moves get 2 — neither crowds the other out",
-      ids(order)[:4] == ["m1_0", "m2_0", "m1_1", "m2_1"], str(ids(order)[:4]))
+                          "move1": [cand("lo", 0.75), cand("hi", 0.95)]}], 0.70)
+check("ranks similarity descending", ids(order) == ["hi", "lo"], str(ids(order)))
 
 # --- candidates compete on score across seeds, not in seed order ------------------------------
-order = pd._stage_order([{"seed": "S1", "move1": [cand("weak", 0.71)], "move2": []},
-                         {"seed": "S2", "move1": [cand("strong", 0.99)], "move2": []}], 0.70)
+order = pd._stage_order([{"seed": "S1", "move1": [cand("weak", 0.71)]},
+                         {"seed": "S2", "move1": [cand("strong", 0.99)]}], 0.70)
 check("the strongest candidate wins across seeds",
       [(s, c["id"]) for s, c in order] == [("S2", "strong"), ("S1", "weak")], str(order))
 
 # --- degenerate inputs -------------------------------------------------------------------------
 check("no seeds offers nothing", pd._stage_order([], 0.70) == [])
 check("everything below the floor offers nothing",
-      pd._stage_order([{"seed": "S1", "move1": [cand("a", 0.1)], "move2": []}], 0.70) == [])
+      pd._stage_order([{"seed": "S1", "move1": [cand("a", 0.1)]}], 0.70) == [])
 
 # --- the queue ceiling: how much this run may stage -------------------------------------------
 # The cap is a rate and the ceiling is a level, and only the second bounds the queue. These are

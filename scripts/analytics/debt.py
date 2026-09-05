@@ -1,7 +1,7 @@
 """Structural debt — what the corpus grew out of and the writer stopped attending to.
 
-Move 7 of the generativity engine (spec §8.1; design in docs/indexia-prompt-assistant-spec.md).
-The other six moves ask what is semantically near, temporally adjacent, or structurally between.
+Move 6 of the generativity engine (spec §8.1; design in docs/indexia-prompt-assistant-spec.md).
+The other five moves ask what is semantically near or structurally between.
 This one asks what is *load-bearing and neglected*, which nothing else in Indexia reads.
 
     debt(n) = descendants(n) / (1 + attention(n))
@@ -141,7 +141,7 @@ def report(corpus, min_descendants=MIN_DESCENDANTS, limit=K):
 
 
 def prompt(row):
-    """The one rendered line for a candidate (spec §5 of the move-7 design).
+    """The one rendered line for a candidate (spec §5 of the move-6 design).
 
     States the structural fact and stops. It never says what the note means, implies, or should
     argue — that is spec §8.2's boundary applied to a sentence: the machine proposes the site, the
@@ -165,7 +165,7 @@ def diagnosis(corpus, min_descendants=MIN_DESCENDANTS):
 
     v0.8.5 learned this on the digest's staging budget: a run that goes quiet has to name the
     limit that bound it, or it reads as a broken job. The same applies with more force here,
-    because move 7 depends on a writing habit — notes committed with a `--continues`/`--branches`
+    because move 6 depends on a writing habit — notes committed with a `--continues`/`--branches`
     parent. Without one, `BEGETS` is a scatter of roots, every descendant count is zero, and the
     move is silently dead rather than merely quiet.
     """

@@ -16,6 +16,7 @@ Serves a small static page that draws the graph, and the JSON it reads and write
     GET  /api/note/<id>
     GET  /api/search[?q&field&author&since&until&limit]   lexical, never semantic
     GET  /api/links[?status&limit]      the ratification queue
+    GET  /api/provocations[?refresh]    moves 2-6, read live (§8.1) — move 1 is /api/links
     GET  /api/staging                   what is waiting in staging/ (parsed) and staging/scans/ (listed)
     GET  /api/status                    the maintenance clock, the daemons, and the measurements
     GET  /api/walk                      the walk currently open, if any
@@ -78,7 +79,7 @@ import ingest_staging  # noqa: E402  (the staging batch, shared with ingest-stag
 import notelib  # noqa: E402  (import needs the path above)
 import scheduler  # noqa: E402  (its JOBS table and cadence arithmetic; main() is __main__-guarded)
 import tailscale  # noqa: E402  (--tailscale: MagicDNS IP + cert provisioning)
-from analytics import autocatalysis, common, criticality, fitness, walks  # noqa: E402
+from analytics import autocatalysis, common, criticality, debt, fitness, walks  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UI_DIR = os.path.realpath(os.path.join(REPO, "ui"))
@@ -138,6 +139,7 @@ LOG_TAIL = 40            # lines of scheduler log the panel shows
 LOG_TAIL_BYTES = 64 << 10   # how far back to seek for them; the log reached 726 KB before rotation
 FITNESS_SHOW = 10
 ATTENTION_SHOW = 10
+PROVOKE_SHOW = 5         # candidates per move in the queue panel's read-only sections
 
 
 class ReadOnly(RuntimeError):
@@ -552,6 +554,7 @@ class State:
         self.lock = threading.Lock()
         self.cache = {}
         self.status_cache = None         # (monotonic, payload) — its own slot; see status()
+        self.provocations_cache = None   # (monotonic, payload) — its own slot; see provocations()
         self.writable = writable
         # The seam Ingestor already exposes. A test passes None, so driving the routes needs no
         # Ollama — and leaves no stray vector to invalidate the ANN index (tests/test_ui_write.py).
@@ -618,6 +621,38 @@ class State:
         with self.lock:
             rows = notelib.LinkManager(self.db).list(status=status, limit=limit)
         return {"links": rows, "count": len(rows)}
+
+    def provocations(self, refresh=False):
+        """Moves 2-6, read live for the queue panel's non-link sections (§8.1).
+
+        Move 1 already has a persisted queue — `links()` above, fed by the nightly digest or
+        `provoke.sh --stage` — because it is the one move that proposes an actual link. The
+        other five never stage anything (spec: only move 1 may write a SUGGEST_LINK), so
+        there is nothing for a second queue to hold; this instead renders the same read the
+        digest does, on demand, so a reader who cleared the link queue still has something to
+        look at without waiting for tomorrow night's run.
+
+        Cached like `status()` for the same reason: it is a panel a reader reopens, not a page
+        load, and move 3 in particular asks the k-NN cache up to `sample` times.
+        """
+        with self.lock:
+            hit = self.provocations_cache
+            if hit and not refresh and time.monotonic() - hit[0] < self.ttl:
+                return hit[1]
+            corpus = common.Corpus(self.db)
+            move6 = debt.report(corpus, limit=PROVOKE_SHOW)
+            for r in move6:
+                r["prompt"] = debt.prompt(r)
+            payload = {
+                "move2": notelib.move2_candidates(self.db, k=PROVOKE_SHOW),
+                "move3": notelib.move3_candidates(self.db, k=PROVOKE_SHOW),
+                "move4": notelib.move4_candidates(self.db, k=PROVOKE_SHOW),
+                "move5": notelib.move5_candidates(self.db),
+                "move6": move6,
+                "move6_quiet": "" if move6 else debt.diagnosis(corpus),
+            }
+            self.provocations_cache = (time.monotonic(), payload)
+            return payload
 
     def staging_preview(self):
         """What is sitting in both inboxes: staging/ parsed and validated but not committed, and
@@ -735,6 +770,7 @@ class State:
         with self.lock:
             self.cache.clear()
             self.status_cache = None     # Op count, backlog and staging depth all just moved
+            self.provocations_cache = None   # a new/ratified/rejected note or bind can move any move
         return result
 
     def add_note(self, payload):
@@ -1113,6 +1149,8 @@ class Handler(BaseHTTPRequestHandler):
             limit = one("limit")
             return self._json(self.state.links(status=one("status"),
                                                limit=int(limit) if limit else 100))
+        if path == "/api/provocations":
+            return self._json(self.state.provocations(refresh=bool(query.get("refresh"))))
         if path == "/api/staging":
             return self._json(self.state.staging_preview())
         if path == "/api/status":
