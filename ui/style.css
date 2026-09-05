@@ -425,4 +425,11 @@ body.writing #panel { opacity: 0.55; pointer-events: none; }
    writable): whichever rule already says display:none, this one agrees. */
 @media (max-width: 700px) {
   #walk, [data-panel-source="queue"], [data-panel-source="staging"] { display: none; }
+  /* The corpus summary ("N notes · critical (mean degree …) · …") is one long unbreakable-looking
+     line competing with the header buttons for the same 375px — it wraps mid-phrase and pushes
+     the row tall rather than truncating. Hidden here rather than shortened: the number is not
+     load-bearing for anything narrow mode still offers (search/link/+note/status), and it stays
+     one tap away in `status`, which already reports the corpus. app.js keeps setting it — hiding
+     is presentational only, not a fetch this skips. */
+  #corpus { display: none; }
 }
