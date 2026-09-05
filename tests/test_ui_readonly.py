@@ -220,6 +220,15 @@ with lib.corpus_guard(db):
               code == 200 and isinstance(json.loads(body)["links"], list),
               f"{json.loads(body)['count']} suggested")
 
+        # Moves 2-6, read live for the queue panel's non-link sections — see State.provocations.
+        code, body = get(f"{base}/api/provocations")
+        prov = json.loads(body)
+        check("GET /api/provocations answers with all five non-link moves",
+              code == 200 and {"move2", "move3", "move4", "move5", "move6"} <= set(prov),
+              str(sorted(prov)))
+        check("move 5's buckets are always present, even empty",
+              {"orphans", "inhibited", "on_this_day"} <= set(prov["move5"]))
+
         # A dry run reads the directory, parses it, and asks the DB which ids exist. It must not
         # commit, embed, or move a file — the Op check at the bottom is what proves the first.
         code, body = get(f"{base}/api/staging")
