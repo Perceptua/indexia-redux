@@ -115,7 +115,7 @@ bash scripts/analytics.sh debt               # load-bearing notes you stopped at
 
 # 8. Maintenance jobs (these also run on a schedule — see Maintenance loop).
 bash scripts/knn-cache.sh                   # materialize the k-NN cache the moves read (do this first)
-bash scripts/provocation-digest.sh          # → recent/provocations.md (all seven moves)
+bash scripts/provocation-digest.sh          # → recent/provocations.md (all six moves)
 bash scripts/resurface.sh                   # → recent/resurface.md
 bash scripts/link-expiry.sh --dry-run       # what the suggestion sweep would prune
 
@@ -161,7 +161,7 @@ Each capability has a fuller how-to below: [Ingestion](#ingestion) · [Embedding
 | `analytics.sh` | **Read-only** reports (spec §13): `fitness`/`debt`/`criticality`/`communities`/`autocatalysis`/`visited`/`walks`/`walk`/`replay`, most with `--as-of`. See Analytics. |
 | `ui.sh [start\|stop\|status\|run]` | Graph view in a browser: serves `http://127.0.0.1:8420/`. Reads the corpus — including a `search` panel over title/body/source/author/date *(v0.8.3)* — and writes to it: add a note, ratify a bind, correct a typo, drain `staging/`, or record a walk *(v0.8.3)*, each through the same `notelib` path the CLI uses *(v0.8.1)*. `run --read-only` restores the reads-only surface; `run --tailscale` serves the tailnet over HTTPS instead of loopback; `run --snapshot --json` prints the payload without serving. See [Graph UI](#graph-ui). |
 | `knn-cache.sh` | Nightly rebuild of the k-NN adjacency cache the provocation moves read; `--status`, `--if-stale`. See Maintenance loop. |
-| `provocation-digest.sh` | Nightly digest of all seven moves → `recent/provocations.md`; stages the strongest move-1/2 suggestions (spec §8.1). |
+| `provocation-digest.sh` | Nightly digest of all six moves → `recent/provocations.md`; stages the strongest move-1 suggestions (spec §8.1). |
 | `resurface.sh` | Weekly re-encounter of orphan/inhibited/anniversary notes → `recent/resurface.md` (spec §8.1). |
 | `link-expiry.sh [--dry-run]` | Weekly sweep of stale `suggested` links, so the ratification queue stays human-sized (spec §7). See Links & provocations. |
 | `backfill-link-dates.sh [--dry-run]` | One-time migration: date `BINDS` edges predating `BINDS.created_at`, from the `Op` log. |
@@ -528,7 +528,7 @@ bash scripts/analytics.sh autocatalysis           # only the ones that cycle und
 bash scripts/analytics.sh fitness --limit 15      # note standing, and what it's made of
 bash scripts/analytics.sh criticality             # sparse / critical / dense
 bash scripts/analytics.sh visited --ascending     # what you keep but never revisit
-bash scripts/analytics.sh debt                    # what you owe writing (move 7)
+bash scripts/analytics.sh debt                    # what you owe writing (move 6)
 bash scripts/analytics.sh communities --as-of 20260701T000000000Z   # the graph as it stood then
 ```
 
@@ -547,7 +547,7 @@ different points. The report prints the **catalytic core** (the members forming 
 **`reproduction_rate`** (intra-community catalysis edges per day) and a **local `criticality`** (mean
 internal degree). All descriptive — nothing is gated on any of them (§10).
 
-**Structural debt** *(move 7)* is `descendants / (1 + attention)`, where attention is ratified-`BINDS`
+**Structural debt** *(move 6)* is `descendants / (1 + attention)`, where attention is ratified-`BINDS`
 degree plus `Note.visited` — the notes the corpus grew out of but the writer stopped going back to.
 **The two halves are read off different relations, and that is the whole design**: `BEGETS` is free and
 automatic (it exists because you named a parent), while a ratified bind or a walk is expensive and
@@ -555,7 +555,7 @@ human. Measure both on the link graph and they cancel — "important" would mean
 "neglected" would mean poorly-linked, and no note could be both. It is the deliberate inverse of
 `fitness`, which credits descendants and so scores exactly these notes as the healthiest in the graph.
 There are **no weights to tune**, only a descendant floor and a cap. A note with no descendants never
-appears (move 6 already resurfaces orphans), and a parent and its descendant never both appear — neglect
+appears (move 5 already resurfaces orphans), and a parent and its descendant never both appear — neglect
 is inherited, so only the higher scorer of a lineage survives. An empty report says *why* it is empty:
 "nothing is owed" and "lineage is too shallow to measure" are different messages, and the second means
 notes are not being committed with a `--continues`/`--branches` parent. Rendered as the last section of
@@ -900,8 +900,8 @@ built:
 | Job | Cadence | What it does |
 |-----|---------|--------------|
 | `knn-cache` | nightly | materialize every embedded note's top-k neighbours, so the moves below pay no ANN rebuild |
-| `provocation-digest` | nightly | run all seven moves → `recent/provocations.md`; stage the strongest move-1/2 suggestions (§8.1) |
-| `resurface` | weekly | re-encounter orphan/inhibited/anniversary notes → `recent/resurface.md` (§8.1 move 6) |
+| `provocation-digest` | nightly | run all six moves → `recent/provocations.md`; stage the strongest move-1 suggestions (§8.1) |
+| `resurface` | weekly | re-encounter orphan/inhibited/anniversary notes → `recent/resurface.md` (§8.1 move 5) |
 | `link-expiry` | weekly | sweep `suggested` links older than 30 days, keeping the queue human-sized (§7) |
 
 The same table is readable in the [Graph UI](#graph-ui)'s `status` panel, with each job's last
@@ -976,7 +976,7 @@ Every job also runs **standalone** via its own `scripts/*.sh` wrapper — handy 
 
 ```bash
 bash scripts/knn-cache.sh                   # rebuild the k-NN adjacency cache (Op KNN_CACHE)
-bash scripts/provocation-digest.sh --no-stage   # render the seven-move digest without staging links
+bash scripts/provocation-digest.sh --no-stage   # render the six-move digest without staging links
 bash scripts/resurface.sh                   # weekly re-encounter digest (Op RESURFACE)
 bash scripts/link-expiry.sh --dry-run       # what the suggestion sweep would delete (Op EXPIRE_LINKS)
 ```

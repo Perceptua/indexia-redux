@@ -1,12 +1,12 @@
 ---
 name: writing-prompts
-description: Surface the Indexia notes in most structural debt — the ones the corpus grew out of but the writer has stopped attending to — and turn each into a writing prompt. Use when the user asks what to write next, what they have been neglecting, which notes need developing, where they owe writing, or asks for a writing prompt from their notes. Also covers "structural debt" and "move 7" by name. For measuring the graph generally (fitness, communities, criticality) use the analytics skill; for finding a specific note use search-notes; for capturing a note use add-note.
+description: Surface the Indexia notes in most structural debt — the ones the corpus grew out of but the writer has stopped attending to — and turn each into a writing prompt. Use when the user asks what to write next, what they have been neglecting, which notes need developing, where they owe writing, or asks for a writing prompt from their notes. Also covers "structural debt" and "move 6" by name. For measuring the graph generally (fitness, communities, criticality) use the analytics skill; for finding a specific note use search-notes; for capturing a note use add-note.
 ---
 
 # Writing prompts — the notes you owe writing
 
-Indexia's difference engine has seven generativity moves (spec §8.1). Six ask what is
-semantically near, temporally adjacent, or structurally between. **Move 7 asks what is
+Indexia's difference engine has six generativity moves (spec §8.1). Five ask what is
+semantically near or structurally between. **Move 6 asks what is
 load-bearing and neglected**, which nothing else in the system reads.
 
     debt(note) = descendants / (1 + attention)
@@ -29,7 +29,7 @@ notes as the *healthiest* things in the graph. Fitness measures standing; this m
 ## Prerequisites
 
 - The database must be up (`bash scripts/status.sh`; start with `bash scripts/up.sh`).
-- No embedder needed — move 7 touches neither the embeddings nor the clock, so it is the cheapest
+- No embedder needed — move 6 touches neither the embeddings nor the clock, so it is the cheapest
   thing in the digest.
 - **Execution:** run through the WSL wrapper from the repo root:
   ```bash
@@ -77,7 +77,7 @@ Other things to get right:
 - **An empty list is an answer, and it says which one.** "Nothing is owed" and "lineage is too
   shallow to measure" are different messages. Read the reason back rather than reporting silence.
 - **Notes with no descendants never appear**, however neglected. That is deliberate — an unlinked
-  leaf is just a recent note, and move 6 (re-encounter) already resurfaces orphans.
+  leaf is just a recent note, and move 5 (re-encounter) already resurfaces orphans.
 - **One note per lineage.** Neglect is inherited, so a parent and its descendant never both
   appear; only the higher scorer survives. If the user wants to see the whole chain, follow the
   Folgezettel address or use search-notes.
@@ -95,7 +95,7 @@ Nothing needs to be dismissed or cleared. The list is recomputed from the graph 
 
 ## Notes & gotchas
 
-- **Move 7 depends on a writing habit.** It measures lineage, so it only works if notes are
+- **Move 6 depends on a writing habit.** It measures lineage, so it only works if notes are
   committed with a `--continues`/`--branches` parent. Without one, `BEGETS` is a scatter of
   isolated roots, every descendant count is zero, and the report says so explicitly rather than
   going quiet.

@@ -1,19 +1,19 @@
-# Spec: Move 7 — structural debt
+# Spec: Move 6 — structural debt
 
 **Status:** draft v0.3 — one move, one metric
 **Was:** "Structural Prompt Assistant" (v0.1–v0.2). The file keeps its old name; the thing does not.
 **Scope:** find notes the corpus is built on but the writer has stopped attending to, and render one writing prompt each.
-**Placement:** `notelib.move7_candidates()`, rendered by `scripts/provocation_digest.py` — the seventh generativity move (spec §8.1).
+**Placement:** `notelib.move6_candidates()`, rendered by `scripts/provocation_digest.py` — the sixth generativity move (spec §8.1).
 
 ---
 
 ## 1. Naming
 
-This is **move 7**. indexia's difference-engine has six generativity moves (spec §8.1); its output is a **provocation**; provocations that ask for writing rather than for a link are already called **prompts** in the digest ("moves 4/5 are rendered as write-a-note prompts"). So there is no new vocabulary here, and v0.2's parallel one — "signatures", a "prompt assistant", an `analytics.sh prompts` surface — is dropped.
+This is **move 6**. indexia's difference-engine has five other generativity moves (spec §8.1); its output is a **provocation**; provocations that ask for writing rather than for a link are already called **prompts** in the digest ("moves 3/4 are rendered as write-a-note prompts"). So there is no new vocabulary here, and v0.2's parallel one — "signatures", a "prompt assistant", an `analytics.sh prompts` surface — is dropped.
 
-That reconciliation settles the placement question v0.2 left open. Moves live in `notelib` and are consumed by the digest. Moves 3–6 read the graph and render; only moves 1–2 stage suggestions into the ratification queue. **Move 7 names a single note, so it renders and stages nothing** — not as a special rule, but as the ordinary behaviour of most of the catalog.
+That reconciliation settles the placement question v0.2 left open. Moves live in `notelib` and are consumed by the digest. Moves 2–5 read the graph and render; only move 1 stages suggestions into the ratification queue. **Move 6 names a single note, so it renders and stages nothing** — not as a special rule, but as the ordinary behaviour of most of the catalog.
 
-It also inherits the read-only guarantee without needing a separate layer to hold it. Spec §13.4 draws the boundary exactly here: an operation may read anything, and `detect_communities` already sits in `notelib` on the operational path because it *writes nothing*. Move 7 qualifies the same way.
+It also inherits the read-only guarantee without needing a separate layer to hold it. Spec §13.4 draws the boundary exactly here: an operation may read anything, and `detect_communities` already sits in `notelib` on the operational path because it *writes nothing*. Move 6 qualifies the same way.
 
 ---
 
@@ -49,7 +49,7 @@ One ratio. **It has no tunable weights** — the only constants in this spec are
 
 **Properties worth knowing before building it.**
 
-- **Leaves score zero and never surface.** A note with no descendants has `debt = 0` however neglected it is. That is correct and deliberate: an unlinked leaf is just a recent note, and **move 6 already resurfaces orphans**. Move 7 does not duplicate it.
+- **Leaves score zero and never surface.** A note with no descendants has `debt = 0` however neglected it is. That is correct and deliberate: an unlinked leaf is just a recent note, and **move 5 already resurfaces orphans**. Move 6 does not duplicate it.
 - **Well-attended roots self-cancel.** The root of a large line of thought usually *is* well linked and well walked, so its denominator grows with its numerator. What survives to the top is the note that grew a subtree and was then left alone — which is the target exactly.
 - **It degrades gracefully.** `Note.visited` is currently 0 for every note (§11.2), so today the metric is `descendants / (1 + binds_degree)`. That is still the right question, and no code changes when walks start being recorded.
 - **No percentile normalization.** v0.2 needed percentiles to make seven signatures comparable. With one metric you sort the raw number.
@@ -60,7 +60,7 @@ One ratio. **It has no tunable weights** — the only constants in this spec are
 
 ## 3. Philosophy, in short
 
-**3.1 Topology, not semantics.** Move 7 never asks what a note says. It does not need to, and the five embedding-and-timestamp moves already cover meaning. Structure is the signal nothing else in indexia reads.
+**3.1 Topology, not semantics.** Move 6 never asks what a note says. It does not need to, and the four embedding-and-timestamp moves already cover meaning. Structure is the signal nothing else in indexia reads.
 
 **3.2 Name the site, not the conclusion.** The prompt says where to write, never what to argue. "Twelve notes descend from *Legibility*; nothing links back" is a prompt. "Argue that legibility is the core failure mode of institutional design" is a theft. If the line contains a claim the writer did not make, it is malformed. This is spec §8.2 — the machine proposes, the human disposes — applied to a rendered line.
 
@@ -82,7 +82,7 @@ This replaces v0.2's per-signature quota (meaningless with one signature) and it
 
 **4.3 Suppression.** Only `status = 'proposed'` notes, which are not yet corpus. **No degree-percentile suppression** — v0.2 inherited a rule excluding the top 0.5% by degree as "structural furniture", which is actively wrong here: in indexia a note that many notes link to *is* how a keyword exists (spec §10, "a keyword is just a note that many notes link to"). Those notes are also, by construction, the ones this metric already scores low.
 
-**4.4 Cap** at `MOVE7_K = 5`, matching the digest's other per-move caps.
+**4.4 Cap** at `MOVE6_K = 5`, matching the digest's other per-move caps.
 
 ---
 
@@ -111,17 +111,17 @@ Two templates, because "nothing" and "only two" are different facts and collapsi
 **Digest section heading**, matching the existing six:
 
 ```
-## Move 7 — structural debt (the corpus grew out of these; you have not been back)
+## Move 6 — structural debt (the corpus grew out of these; you have not been back)
 ```
 
 ---
 
 ## 6. Placement and code
 
-Move 7 is a pure function in `notelib`, alongside moves 1–6:
+Move 6 is a pure function in `notelib`, alongside moves 1–5:
 
 ```python
-def move7_candidates(db, k=MOVE7_K, min_descendants=MIN_DESCENDANTS): ...
+def move6_candidates(db, k=MOVE6_K, min_descendants=MIN_DESCENDANTS): ...
 ```
 
 `provocation_digest.build()` calls it beside `move3_candidates`/`move5_candidates`, and `render()` gains one section. No new script, no new CLI, no new schema type, no new scheduled job — the digest already runs nightly.
@@ -134,9 +134,9 @@ def move7_candidates(db, k=MOVE7_K, min_descendants=MIN_DESCENDANTS): ...
 | binds degree | `SELECT outV().id AS a, inV().id AS b FROM BINDS WHERE status='ratified'` | first half of `_undirected_adjacency` |
 | visited, title, body, status | `SELECT id, title, body, status, visited FROM Note` | `Corpus._read_notes` |
 
-Descendant counts are then pure Python over the parent map — invert it to a children map and reach out from each note, which is exactly what `Corpus._reach` does. No new algorithm, no dependency, no vector call, and therefore no k-NN cache dependency: **move 7 is the only move that touches neither the embeddings nor the clock**, so it costs the digest nothing measurable.
+Descendant counts are then pure Python over the parent map — invert it to a children map and reach out from each note, which is exactly what `Corpus._reach` does. No new algorithm, no dependency, no vector call, and therefore no k-NN cache dependency: **move 6 is the only move that touches neither the embeddings nor the clock**, so it costs the digest nothing measurable.
 
-**Tests.** The `debt` ratio, the descendant floor and the lineage dedup are conventions rather than data, so they pin as pure arithmetic with no database — the pattern `tests/test_analytics_metrics.py` already uses for `fitness.score` and `autocatalysis.autocatalytic_core`. That file imports `notelib` as well as `analytics`, so it can host these, though its name would then be slightly off: move 7 is a `notelib` move, not an analytics report. Splitting the arithmetic out cleanly is the alternative. The read-only property needs no test of its own — move 7 writes nothing, and the digest's `Op` count already says so if that changes.
+**Tests.** The `debt` ratio, the descendant floor and the lineage dedup are conventions rather than data, so they pin as pure arithmetic with no database — the pattern `tests/test_analytics_metrics.py` already uses for `fitness.score` and `autocatalysis.autocatalytic_core`. That file imports `notelib` as well as `analytics`, so it can host these, though its name would then be slightly off: move 6 is a `notelib` move, not an analytics report. Splitting the arithmetic out cleanly is the alternative. The read-only property needs no test of its own — move 6 writes nothing, and the digest's `Op` count already says so if that changes.
 
 **Optional, later:** a thin `analytics.sh debt` wrapper over the same function, for asking on demand rather than reading the nightly file. Analytics imports `notelib` (never the reverse), so this is a legal five-line report. Deferred — it is a second surface for one number, and the digest is where prompts already live.
 
@@ -158,7 +158,7 @@ Module constants next to the other moves' — no config file exists anywhere in 
 
 ```python
 MIN_DESCENDANTS = 3    # below this the ratio is noise, not debt (4.1)
-MOVE7_K         = 5    # candidates rendered, matching the digest's other moves
+MOVE6_K         = 5    # candidates rendered, matching the digest's other moves
 ```
 
 That is the entire tuning surface. There are no weights.
@@ -179,11 +179,11 @@ The sharper failure to watch for is the opposite of resolution — a note that s
 
 ## 10. Failure modes
 
-**10.1 The corpus is empty.** The *De Anima* corpus was wiped 2026-08-02. As of 2026-08-03 `analytics.sh criticality` reports **0 notes** (band `sparse`), and `visited` and `walks` report 0. Before the wipe it was ~101 notes. **Nothing here can be validated against live data yet.** Build against synthetic lineages — `move7_candidates` is a pure function of three edge lists, which is what makes that possible — and check the gates once the corpus passes ~50 notes with real depth. The two constants in §8 are the only guesses, which is the point of having only two: `STAGE_MIN_SCORE` was set to 0.70 on intuition, admitted 4 of 55 candidates, and had to be recalibrated against measured scores.
+**10.1 The corpus is empty.** The *De Anima* corpus was wiped 2026-08-02. As of 2026-08-03 `analytics.sh criticality` reports **0 notes** (band `sparse`), and `visited` and `walks` report 0. Before the wipe it was ~101 notes. **Nothing here can be validated against live data yet.** Build against synthetic lineages — `move6_candidates` is a pure function of three edge lists, which is what makes that possible — and check the gates once the corpus passes ~50 notes with real depth. The two constants in §8 are the only guesses, which is the point of having only two: `STAGE_MIN_SCORE` was set to 0.70 on intuition, admitted 4 of 55 candidates, and had to be recalibrated against measured scores.
 
 **10.2 `visited` has never carried a signal.** Before the reset, all 44 walks ever recorded were `test_walk_ops.py` artifacts with an identical `Op` fingerprint, and `visited` was 0 for every note across the corpus's whole history — part of what motivated removing the walk working set in v0.8.3. The metric degrades to the binds-only form and needs no code change when that changes (§2), but until walks are used in anger, "less visited" is carrying no weight in practice.
 
-**10.3 Shallow lineage.** The metric is worthless if notes are not written with parents. If `add-note` is mostly called without `--continues`/`--branches`, `BEGETS` is a scatter of isolated roots, every descendant count is 0, and move 7 renders nothing forever. **Check this before building**: the fraction of notes with a parent is one query, and if it is low the honest conclusion is that this move cannot work on this corpus, not that the threshold needs lowering.
+**10.3 Shallow lineage.** The metric is worthless if notes are not written with parents. If `add-note` is mostly called without `--continues`/`--branches`, `BEGETS` is a scatter of isolated roots, every descendant count is 0, and move 6 renders nothing forever. **Check this before building**: the fraction of notes with a parent is one query, and if it is low the honest conclusion is that this move cannot work on this corpus, not that the threshold needs lowering.
 
 **10.4 Root dominance.** A deep corpus concentrates descendants near its roots. §4.2's lineage dedup is what keeps this from producing one chain rendered five ways, and it is the constraint most likely to need revision on real data — in particular whether "same ancestor path" should be the whole path or a bounded number of hops.
 
@@ -195,7 +195,7 @@ The sharper failure to watch for is the opposite of resolution — a note that s
 
 ## 11. Milestones
 
-**v0** — `move7_candidates` + the digest section + pure-arithmetic tests. No `analytics.sh` surface, no dismissal, no as-of scoring. This is a day's work, and it should be, because the open question is whether the prompts are worth reading and only running it answers that.
+**v0** — `move6_candidates` + the digest section + pure-arithmetic tests. No `analytics.sh` surface, no dismissal, no as-of scoring. This is a day's work, and it should be, because the open question is whether the prompts are worth reading and only running it answers that.
 
 **v0.1** — Calibrate `MIN_DESCENDANTS` and the §4.2 dedup rule against a corpus past ~50 notes. Check 10.3 first.
 
@@ -207,7 +207,7 @@ Anything beyond that — dismissal, decay, more detectors — should have to arg
 
 ## 12. Open questions
 
-1. **What fraction of notes have a `BEGETS` parent?** Decides whether move 7 is viable at all (10.3). One query, and it should be run before anything is built.
+1. **What fraction of notes have a `BEGETS` parent?** Decides whether move 6 is viable at all (10.3). One query, and it should be run before anything is built.
 2. **Transitive descendants or direct children?** Transitive is specified, is already computed in one pass, and is the honest reading of "the corpus grew out of this". But it is what creates root dominance (10.4). Direct children would be flatter and blunter.
 3. **Should `visited` be weighted equal to a bind?** They are summed 1:1 as the simplest defensible choice, and while `visited` is 0 everywhere the question is moot. Once walks are recorded it will not be: a walk-through is much cheaper than a ratified bind, so 1:1 may over-credit attention and suppress real debt.
 4. **Is a `continues` child worth the same as a `branches` child?** The metric ignores `BEGETS.mode`. A `continues` chain is one thought carried forward; a `branches` child is a new direction. Twelve continues-descendants may be one long note in disguise.

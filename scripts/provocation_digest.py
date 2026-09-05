@@ -2,19 +2,18 @@
 """provocation-digest — run all six generativity moves and render them as a digest (spec §8.1,
 §12.6; the v1.1 scheduled provocation surface).
 
-Over a seed set (recent active notes + the hub of each detected community) it runs move 1 (semantically near,
-graph-far) and move 2 (temporally adjacent, otherwise distant) per seed, plus the corpus-wide
-moves 3 (bridges), 4 (implicit themes), 5 (contradiction pairs), 6 (re-encounter) and 7
-(structural debt). It writes `recent/provocations.md` and, with --stage (the default for the
-scheduled run), stages move 1/2 seed→candidate pairs as SUGGEST_LINK edges for you to ratify.
-Moves 4/5/7 are rendered as write-a-note prompts — the machine proposes, never authors (§8.2).
-Logs Op(PROVOKE_DIGEST).
+Over a seed set (recent active notes + the hub of each detected community) it runs move 1
+(semantically near, graph-far) per seed, plus the corpus-wide moves 2 (bridges), 3 (implicit
+themes), 4 (contradiction pairs), 5 (re-encounter) and 6 (structural debt). It writes
+`recent/provocations.md` and, with --stage (the default for the scheduled run), stages move 1
+seed→candidate pairs as SUGGEST_LINK edges for you to ratify. Moves 3/4/6 are rendered as
+write-a-note prompts — the machine proposes, never authors (§8.2). Logs Op(PROVOKE_DIGEST).
 
-Move 7 is the one move that lives in `analytics/` rather than `notelib`, and the import direction
+Move 6 is the one move that lives in `analytics/` rather than `notelib`, and the import direction
 is the reason: analytics may import notelib and never the reverse, so a move built on `Corpus`
 (which already reads lineage, ratified binds and `visited` in one pass, and already honours
 --as-of) has to sit there. This script is operational, so importing it is legal and precedented —
-scripts/ui.py does the same. What it may not do, and does not, is let move 7 write anything.
+scripts/ui.py does the same. What it may not do, and does not, is let move 6 write anything.
 
 Two limits keep the run affordable and its output human-sized:
   * it waits for the embed queue to drain before touching the vector layer (fail-open), and
@@ -38,8 +37,6 @@ import argparse
 import json
 import os
 import sys
-from itertools import zip_longest
-
 import notelib
 from analytics import common, debt
 
@@ -106,34 +103,17 @@ def _addr(db, note_id):
 
 
 def _stage_order(per_seed, min_score):
-    """The order candidates are offered to the suggestion queue: strongest move-1 hits and
-    most-distant move-2 hits, interleaved. Returns [(seed_id, candidate), …].
-
-    Moves 1 and 2 score on opposite axes. Move 1's score is similarity — high means nearer,
-    which is what makes a graph-far neighbour provocative. Move 2's is the same cosine read as
-    distance — *low* means further apart, which is what makes a note you held in mind the same
-    hour and never joined provocative (its own max_score already caps it at 0.5). So they cannot
-    be merged into a single "top by score" ranking, and applying one floor to both would silence
-    move 2 completely. Each is ranked on its own axis, then interleaved so the shared cap does
-    not let either move crowd the other out."""
-    m1 = sorted(((e["seed"], c) for e in per_seed for c in e["move1"]
-                 if c.get("score", 0) >= min_score),
-                key=lambda pair: pair[1].get("score", 0), reverse=True)
-    m2 = sorted(((e["seed"], c) for e in per_seed for c in e["move2"]),
-                key=lambda pair: pair[1].get("score", 0))
-    order = []
-    for from_m1, from_m2 in zip_longest(m1, m2):
-        if from_m1:
-            order.append(from_m1)
-        if from_m2:
-            order.append(from_m2)
-    return order
+    """The order candidates are offered to the suggestion queue: strongest move-1 hits first.
+    Returns [(seed_id, candidate), …]."""
+    return sorted(((e["seed"], c) for e in per_seed for c in e["move1"]
+                   if c.get("score", 0) >= min_score),
+                  key=lambda pair: pair[1].get("score", 0), reverse=True)
 
 
 def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
           min_score=STAGE_MIN_SCORE, max_queue=notelib.SUGGESTION_MAX_QUEUE,
           use_cache=True, wait=True, log=None):
-    """Run the six moves and (optionally) stage the best move-1/2 suggestions, up to whichever is
+    """Run the six moves and (optionally) stage the best move-1 suggestions, up to whichever is
     smaller of `stage_cap` and the room left under `max_queue`. Everything found is returned for
     rendering; only what fits the budget is staged. Returns a result dict."""
     lm = notelib.LinkManager(db)
@@ -142,16 +122,12 @@ def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
     seeds = _seeds(db, seeds_limit)
     per_seed = []
     for sid in seeds:
-        entry = {"seed": sid, "addr": _addr(db, sid), "move1": [], "move2": []}
+        entry = {"seed": sid, "addr": _addr(db, sid), "move1": []}
         try:
             entry["move1"] = notelib.move1_candidates(db, sid, k=k, use_cache=use_cache)
         except (ValueError, notelib.EmbedderError):
             pass
-        try:
-            entry["move2"] = notelib.move2_candidates(db, sid, k=k)
-        except (ValueError, notelib.EmbedderError):
-            pass
-        if entry["move1"] or entry["move2"]:
+        if entry["move1"]:
             per_seed.append(entry)
 
     offered, staged = _stage_order(per_seed, min_score), 0
@@ -164,32 +140,32 @@ def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
             if staged >= budget:
                 break
             try:
-                lm.suggest(sid, cand["id"], rationale="provocation-digest: near/temporal move")
+                lm.suggest(sid, cand["id"], rationale="provocation-digest: near move")
             except notelib.LinkExists:
                 continue                     # already proposed or ratified — costs no budget
             cand["staged"] = True
             staged += 1
-    # Move 7 reads the whole graph once and touches neither the embeddings nor the clock, so it is
-    # the cheapest move here. `move7_quiet` is filled only when the list is empty: "nothing is
+    # Move 6 reads the whole graph once and touches neither the embeddings nor the clock, so it is
+    # the cheapest move here. `move6_quiet` is filled only when the list is empty: "nothing is
     # owed" and "lineage is too shallow to measure" are different messages, and a digest read days
     # later has to be able to tell them apart (the v0.8.5 lesson about quiet runs).
     corpus = common.Corpus(db)
-    move7 = debt.report(corpus, limit=k)
+    move6 = debt.report(corpus, limit=k)
     return {"per_seed": per_seed, "staged": staged, "offered": len(offered),
             "stage_cap": stage_cap, "min_score": min_score,
             "queued_before": queued, "max_queue": max_queue, "budget": budget,
-            "move3": notelib.move3_candidates(db, k=k),
-            "move4": notelib.move4_candidates(db, k=k, use_cache=use_cache),
-            "move5": notelib.move5_candidates(db, k=k),
-            "move6": notelib.move6_candidates(db),
-            "move7": move7,
-            "move7_quiet": "" if move7 else debt.diagnosis(corpus)}
+            "move2": notelib.move2_candidates(db, k=k),
+            "move3": notelib.move3_candidates(db, k=k, use_cache=use_cache),
+            "move4": notelib.move4_candidates(db, k=k),
+            "move5": notelib.move5_candidates(db),
+            "move6": move6,
+            "move6_quiet": "" if move6 else debt.diagnosis(corpus)}
 
 
 def render(db, res):
     L = [f"# Provocations — {notelib.format_id(notelib.now_utc())}", "",
          "_Generated by `scripts/provocation-digest.sh`; overwritten on each run. The machine "
-         "proposes; you dispose (spec §8.2). Staged move-1/2 pairs await `link.sh ratify`._", ""]
+         "proposes; you dispose (spec §8.2). Staged move-1 pairs await `link.sh ratify`._", ""]
     L += [f"_Staged **{res['staged']}** of {res['offered']} eligible pair(s) this run — cap "
           f"{res['stage_cap']}/run, move-1 floor {res['min_score']:.2f}, queue ceiling "
           f"{res['max_queue']} ({res['queued_before']} already awaiting a decision). Everything "
@@ -207,59 +183,58 @@ def render(db, res):
         L += [f"> Staging was limited to **{res['budget']}** by the queue ceiling rather than by "
               f"the per-run cap of {res['stage_cap']}.", ""]
 
-    L += ["## Move 1 & 2 — near-but-graph-far / held-together-but-unjoined", ""]
+    L += ["## Move 1 — near-but-graph-far", ""]
     if not res["per_seed"]:
         L += ["_No per-seed candidates._", ""]
     for e in res["per_seed"]:
         head = f"### from `{e['seed']}`" + (f" · {e['addr']}" if e["addr"] else "")
         L += [head, ""]
-        for label, key in (("near, graph-far", "move1"), ("temporally near, distant", "move2")):
-            for c in e[key]:
-                mark = " · _staged_" if c.get("staged") else ""
-                L.append(f"- **{label}** · `{c['id']}` · {c.get('score', 0):.3f} · "
-                         f"{c.get('title') or '(untitled)'}{mark}  \n  {c.get('snippet', '')}")
+        for c in e["move1"]:
+            mark = " · _staged_" if c.get("staged") else ""
+            L.append(f"- **near, graph-far** · `{c['id']}` · {c.get('score', 0):.3f} · "
+                     f"{c.get('title') or '(untitled)'}{mark}  \n  {c.get('snippet', '')}")
         L.append("")
 
-    L += ["## Move 3 — bridge candidates (join two clusters)", ""]
+    L += ["## Move 2 — bridge candidates (join two clusters)", ""]
     L += ([f"- `{c['id']}` · spans {c['spans']} communities · degree {c['degree']} · "
-           f"{c.get('title') or '(untitled)'}" for c in res["move3"]]
+           f"{c.get('title') or '(untitled)'}" for c in res["move2"]]
           or ["_None — needs ≥ 2 detected communities._"])
     L += [""]
 
-    L += ["## Move 4 — implicit themes (write a hub note?)", ""]
-    if not res["move4"]:
+    L += ["## Move 3 — implicit themes (write a hub note?)", ""]
+    if not res["move3"]:
         L += ["_None — no unnamed semantic cluster large enough._"]
-    for t in res["move4"]:
+    for t in res["move3"]:
         L += [f"- theme around `{t['seed']}` ({t['size']} notes):"]
         L += [f"    - `{m['id']}` · {m.get('title') or '(untitled)'}" for m in t["members"]]
     L += [""]
 
-    L += ["## Move 5 — contradiction / tension pairs (reconcile?)", ""]
-    if not res["move5"]:
+    L += ["## Move 4 — contradiction / tension pairs (reconcile?)", ""]
+    if not res["move4"]:
         L += ["_None — no ratified BINDS{inhibits} pairs._"]
-    for p in res["move5"]:
+    for p in res["move4"]:
         reason = f" · _{p['reason']}_" if p.get("reason") else ""
         L += [f"- **now** `{p['new']}` {p.get('new_title') or ''}{reason}  \n"
               f"  **was** `{p['old']}` {p.get('old_title') or ''}"]
     L += [""]
 
-    m6 = res["move6"]
-    L += ["## Move 6 — serendipitous re-encounter", ""]
+    m5 = res["move5"]
+    L += ["## Move 5 — serendipitous re-encounter", ""]
     for label, bucket in (("Orphans (no ratified link)", "orphans"),
                           ("Inhibited (corrected, still re-encounterable)", "inhibited"),
                           ("On this day", "on_this_day")):
         L += [f"### {label}"]
-        L += ([f"- `{c['id']}` · {c.get('title') or '(untitled)'}" for c in m6[bucket]]
+        L += ([f"- `{c['id']}` · {c.get('title') or '(untitled)'}" for c in m5[bucket]]
               or ["_none_"])
         L += [""]
 
     # Last on purpose. Every other move offers something — a link to make, a tension to reconcile,
     # a note you had forgotten. This one says you owe work, so it goes at the bottom, stays capped,
     # and keeps its sentence flat rather than admonishing.
-    L += ["## Move 7 — structural debt (the corpus grew out of these; you have not been back)", ""]
-    if not res["move7"]:
-        L += [f"_None — {res['move7_quiet']}._", ""]
-    for r in res["move7"]:
+    L += ["## Move 6 — structural debt (the corpus grew out of these; you have not been back)", ""]
+    if not res["move6"]:
+        L += [f"_None — {res['move6_quiet']}._", ""]
+    for r in res["move6"]:
         addr = _addr(db, r["id"])
         L += [f"- **{debt.prompt(r)}**  \n"
               f"  `{r['id']}`" + (f" · {addr}" if addr else "")
@@ -275,7 +250,7 @@ def main():
     p.add_argument("-k", "--limit", type=int, default=5, help="candidates per move (default 5)")
     p.add_argument("--seeds", type=int, default=10, help="recent notes to seed from (default 10)")
     p.add_argument("--no-stage", action="store_true",
-                   help="preview only — do not stage move-1/2 suggestions")
+                   help="preview only — do not stage move-1 suggestions")
     p.add_argument("--stage-cap", type=int, default=STAGE_CAP, dest="stage_cap",
                    help=f"most suggestions to stage per run (default {STAGE_CAP})")
     p.add_argument("--min-score", type=float, default=STAGE_MIN_SCORE, dest="min_score",
@@ -312,8 +287,8 @@ def main():
                            "min_score": res["min_score"],
                            "queued_before": res["queued_before"],
                            "max_queue": res["max_queue"], "budget": res["budget"],
-                           "move3": len(res["move3"]), "move4": len(res["move4"]),
-                           "move5": len(res["move5"]), "move7": len(res["move7"])})
+                           "move2": len(res["move2"]), "move3": len(res["move3"]),
+                           "move4": len(res["move4"]), "move6": len(res["move6"])})
     except notelib.ArcadeError as e:
         sys.exit(f"[provocation-digest] failed: {e}\n  SQL: {e.sql}")
 

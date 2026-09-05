@@ -413,7 +413,7 @@ is itself modeled additively, and **as a ratification, not an ingestion** *(v0.7
   stays available to be re-encountered.
 - This preserves a full audit trail of how a belief changed, and lets the generativity engine
   read the correction as just another relationship ("what did I used to think, and why did I
-  change it?" — move 5, §8.1). The "why" lives on `BINDS.rationale`.
+  change it?" — move 4, §8.1). The "why" lives on `BINDS.rationale`.
 - **Being corrected is derived, not stamped.** There is no `status = superseded`. A note is
   *inhibited* exactly when a ratified `BINDS{inhibits}` points at it — so withdrawing the bind
   withdraws the correction, with no second piece of state to keep in step. Nothing about the
@@ -518,22 +518,28 @@ Each move is a query, surfaced on demand or in a periodic "provocation" view:
 1. **Semantically near, graph-far** — high embedding similarity, no short path over `BINDS`
    **or** `BEGETS` (so it won't propose a link where lineage already connects). The flagship
    "you haven't connected these yet" move; exactly where an emergent link wants to form.
-2. **Temporally adjacent, otherwise distant** — notes written in the same session/window,
-   never linked and semantically apart. "You held both in mind at once and never joined
-   them." Possible only because the ID carries the timestamp.
-3. **Bridge candidates** — via community detection on the link graph, a high-betweenness note
+2. **Bridge candidates** — via community detection on the link graph, a high-betweenness note
    that could join two separate clusters. Structural holes are where original ideas live.
-4. **Implicit themes** — a cluster in semantic space with no matching cluster in the link
+3. **Implicit themes** — a cluster in semantic space with no matching cluster in the link
    graph: an unnamed theme running through your thinking → prompt to write a hub/structure
    note.
-5. **Contradiction pairs** — because the corpus is append-only, opposing claims coexist.
+4. **Contradiction pairs** — because the corpus is append-only, opposing claims coexist.
    Surface them as *tension*, not to auto-resolve; the sharpest are the ratified
    `BINDS{inhibits}` pairs (what you used to think, and why you changed it — the `rationale`
    is read straight off the edge). Reconciling one by hand yields a new note — the most
    generative act in the system.
-6. **Serendipitous re-encounter** — timestamp-seeded resurfacing ("on this day"), spaced
+5. **Serendipitous re-encounter** — timestamp-seeded resurfacing ("on this day"), spaced
    resurfacing of orphan/under-linked and *inhibited* notes, and random walks from the current
    note. Luhmann's friction, reconstructed deliberately.
+6. **Structural debt** — notes the corpus grew out of that the writer has stopped attending to:
+   many `BEGETS` descendants, little `BINDS`/`visited` attention paid back. Topology, not
+   semantics — the signal none of the other moves read (see
+   `docs/indexia-prompt-assistant-spec.md`).
+
+*Move 2 (temporally adjacent, otherwise distant) was removed* — a note written in the same
+session as another was already the connection its author was most likely to catch unassisted,
+so the move rarely earned its share of the staging budget. Removing it also collapsed the
+move-1/move-2 interleave in §8.2 below into a single-axis ranking.
 
 ### 8.2 Machine role, bounded
 
@@ -546,9 +552,8 @@ candidate it finds — that is the provocation surface, and narrowing it would c
 is capped is how many candidates it may *stage* into the ratification queue per run, together with a
 similarity floor below which "near" is not near enough to be worth a human decision. The asymmetry is
 the point: reading is cheap, deciding is not, and the bounded resource is the human's attention rather
-than the corpus. Note that the moves do not share one score axis — move 1 ranks by similarity (nearer
-is better) while move 2 ranks by distance (further apart is better, §8.1) — so a single floor across
-both would silence one of them; each is ranked on its own axis and the cap is shared between them.
+than the corpus. Staging is single-axis since move 2 (temporally adjacent, §8.1) was removed: only
+move 1 stages candidates, ranked by similarity (nearer is better) and floored at `STAGE_MIN_SCORE`.
 
 **A rate is not a bound** *(v0.8.5, from measurement)*. The per-run cap and the §7 expiry are a
 *rate* and a *delay*; neither is a *level*, and only a level bounds a queue. Measured over five
@@ -1033,7 +1038,7 @@ whether the corpus is at criticality — is computed from the edges when the que
 | embed-on-commit | event | new `Note` → write `embedding` |
 | knn-cache | nightly (**first**) | materialize each embedded note's top-k neighbours → `KnnCache` (§12.1); skip when the embedded-note set is unchanged |
 | provocation-digest | nightly (**second**) | run the six moves (§8.1) → `recent/provocations.md`, stage `SUGGEST_LINK` under the §8.2 cap. *Named `provocation-builder` and cadenced "on-demand (v1) / digest (v1.1)" until v0.8.5; the built job is the v1.1 one and is scheduled.* |
-| resurfacing | weekly | surface orphan/under-linked/inhibited notes (§8.1 move 6) → `recent/resurface.md` |
+| resurfacing | weekly | surface orphan/under-linked/inhibited notes (§8.1 move 5) → `recent/resurface.md` |
 | link-expiry | weekly | `EXPIRE_LINKS` — retire the unratified tail of the suggestion queue (§7) |
 
 **Weekly is a period, not an hour** *(v0.8.5)*. `_due` gates a weekly job on a full week elapsed

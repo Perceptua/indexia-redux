@@ -915,7 +915,7 @@ def vector_query_lock():
 # The other half of the same LSM_VECTOR problem the lock above solves. A job that interleaves
 # embedding with vector queries pays a full ANN rebuild *per query*, because each new vector
 # invalidates the graph; waiting for the embed queue to drain first means the whole run pays one
-# rebuild and then fast (~3 s) queries. Measured at N=101: the six-move digest ran 36 min
+# rebuild and then fast (~3 s) queries. Measured at N=101: the five-move digest ran 36 min
 # unfinished the interleaved way. Callers are the scheduled jobs (§12.6), never interactive ones.
 EMBED_SETTLE_TIMEOUT = 600.0    # seconds to wait for the embed queue to drain before giving up
 EMBED_SETTLE_POLL = 10.0        # seconds between pending-count checks
@@ -989,7 +989,7 @@ def semantic_search(db, vector, k=10, ef=100, exclude_ids=()):
 
 # ---- k-NN adjacency cache (the vector layer, materialized) -------------------
 # `vector.neighbors` is correct but expensive to *reach*: one new embedding invalidates the whole
-# LSM_VECTOR graph, so the next call rebuilds all N vectors. The six-move digest asks for
+# LSM_VECTOR graph, so the next call rebuilds all N vectors. The five-move digest asks for
 # neighbours once per seed, so interleaved with ingest it paid that rebuild over and over. The
 # nightly knn-cache job (scripts/knn_cache.py) pays it once and writes every embedded note's top-k
 # neighbours to the KnnCache document type; the provocation moves then read the cache through
@@ -1514,9 +1514,9 @@ def expire_suggested_links(db, max_age_days=SUGGESTION_MAX_AGE_DAYS,
 
 
 # ---- provocation moves (the difference-engine, spec §8.1) -------------------
-# Move 1 is the flagship: "semantically near, graph-far". The others (temporal
-# adjacency, bridges, implicit themes, contradictions, resurfacing) join here in the
-# later build steps; they all read the four layers and stage SUGGEST_LINK candidates.
+# Move 1 is the flagship: "semantically near, graph-far". The others (bridges, implicit
+# themes, contradictions, resurfacing) join here in the later build steps; they all read
+# the four layers and stage SUGGEST_LINK candidates.
 def graph_neighborhood(db, seed_id, depth=2):
     """Ids within `depth` hops of the seed over BINDS or BEGETS (either
     direction) — the 'graph-near' set move 1 excludes. Includes the seed itself.
@@ -1535,13 +1535,13 @@ def move1_candidates(db, seed_id, k=5, ef=100, depth=2, use_cache=True):
     must already be embedded (else ValueError).
 
     Reads the nightly k-NN cache by default (`neighbors_of`), which is what makes the
-    six-move digest affordable; `use_cache=False` forces a live vector query."""
+    five-move digest affordable; `use_cache=False` forces a live vector query."""
     near = graph_neighborhood(db, seed_id, depth)         # includes the seed itself
     return neighbors_of(db, seed_id, k=k, ef=ef, exclude_ids=near, use_cache=use_cache)
 
 
-# ---- provocation moves 2–6 (the rest of the difference-engine, spec §8.1) ---
-# Move 1 (above) is the flagship. Moves 2–6 mine the other layer-mismatches; each returns
+# ---- provocation moves 2–5 (the rest of the difference-engine, spec §8.1) ---
+# Move 1 (above) is the flagship. Moves 2–5 mine the other layer-mismatches; each returns
 # candidate rows the machine may propose but never author (§8.2). They power the provocation
 # digest (scripts/provocation_digest.py) and the weekly resurfacing pass.
 def _cosine(a, b):
@@ -1554,46 +1554,8 @@ def _cosine(a, b):
     return dot / (na * nb) if na and nb else 0.0
 
 
-def _links_of(db, note_id):
-    """Ids joined to a note by a BINDS edge (either direction, any status)."""
-    return {r.get("id") for r in rows(db.query(
-        "SELECT id FROM (SELECT expand(both('BINDS')) FROM Note WHERE id = :s)",
-        {"s": note_id})) if r.get("id")}
-
-
-def move2_candidates(db, seed_id, window_hours=24, max_score=0.5, k=5):
-    """Move 2 (§8.1): temporally adjacent, otherwise distant — notes created within
-    `window_hours` of the seed, never BINDS-linked to it, and semantically apart
-    (cosine <= max_score). 'You held both in mind at once and never joined them' — possible
-    only because the id carries the timestamp (§4). The seed must be embedded."""
-    seed = first_row(db.query("SELECT embedding FROM Note WHERE id = :id", {"id": seed_id}))
-    if not seed:
-        raise ValueError(f"no note {seed_id}")
-    svec = seed.get("embedding")
-    if svec is None:
-        raise ValueError(f"seed {seed_id} has no embedding yet (pending-embed)")
-    dt = id_to_dt(seed_id)
-    lo = format_id(dt - timedelta(hours=window_hours))
-    hi = format_id(dt + timedelta(hours=window_hours))
-    linked = _links_of(db, seed_id) | {seed_id}
-    cands = []
-    for r in rows(db.query(
-            "SELECT id, title, status, body, embedding FROM Note "
-            "WHERE id >= :lo AND id <= :hi AND embedding IS NOT NULL", {"lo": lo, "hi": hi})):
-        nid = r.get("id")
-        if nid in linked:
-            continue
-        score = _cosine(svec, r.get("embedding"))
-        if score <= max_score:
-            cands.append({"id": nid, "title": r.get("title"), "status": r.get("status"),
-                          "body": r.get("body"), "snippet": snippet(r.get("body")),
-                          "score": round(score, 6)})
-    cands.sort(key=lambda c: c["score"])              # most distant first
-    return cands[:k]
-
-
-def move3_candidates(db, k=5, min_size=None):
-    """Move 3 (§8.1): bridge candidates — notes whose neighbours span >= 2 detected communities
+def move2_candidates(db, k=5, min_size=None):
+    """Move 2 (§8.1): bridge candidates — notes whose neighbours span >= 2 detected communities
     (structural holes are where original ideas live). Ranks boundary notes by the number of
     distinct communities they touch, then degree. Needs >= 2 communities, else []."""
     if min_size is None:
@@ -1619,8 +1581,8 @@ def move3_candidates(db, k=5, min_size=None):
     return out
 
 
-def move4_candidates(db, k=5, theme_score=0.55, min_theme=None, sample=50, use_cache=True):
-    """Move 4 (§8.1): implicit themes — a tight semantic neighbourhood with no hub note holding
+def move3_candidates(db, k=5, theme_score=0.55, min_theme=None, sample=50, use_cache=True):
+    """Move 3 (§8.1): implicit themes — a tight semantic neighbourhood with no hub note holding
     it together: an unnamed theme running through the notes → a prompt to write one. The machine
     surfaces the theme; the human names it (never auto-authored).
 
@@ -1669,8 +1631,8 @@ def inhibited_note_ids(db):
         if r.get("id")}
 
 
-def move5_candidates(db, k=5):
-    """Move 5 (§8.1): contradiction / tension pairs. The append-only corpus keeps opposing
+def move4_candidates(db, k=5):
+    """Move 4 (§8.1): contradiction / tension pairs. The append-only corpus keeps opposing
     claims side by side — most sharply across a ratified BINDS{inhibits} (what you used to
     think vs the correction). Surface these to reconcile by hand; the machine never
     auto-resolves (§8.2)."""
@@ -1690,8 +1652,8 @@ def move5_candidates(db, k=5):
     return pairs[:k]
 
 
-def move6_candidates(db, k=8):
-    """Move 6 (§8.1): serendipitous re-encounter — resurface orphan (no ratified BINDS) and
+def move5_candidates(db, k=8):
+    """Move 5 (§8.1): serendipitous re-encounter — resurface orphan (no ratified BINDS) and
     inhibited notes plus an 'on this day' anniversary, so nothing is forgotten (nothing truly
     dies, §6). Returns buckets {orphans, inhibited, on_this_day}."""
     ratified_linked = set()
