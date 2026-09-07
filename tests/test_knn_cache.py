@@ -87,10 +87,16 @@ with lib.corpus_guard(db), lib.knn_cache_guard(db):
                              embed=False)
     stale_id = victim_note.note_id
     try:
-        recut = ing.correct_cosmetic(stale_id, "a note that exists only to be corrected, revised")
-        # back-date every built_at to before that CORRECT_COSMETIC op
+        recut = ing.correct_cosmetic(
+            stale_id, {"body": "a note that exists only to be corrected, revised"})
+        # Back-date built_at to just before that CORRECT_COSMETIC op — but no further: the victim
+        # note's own ADD_NOTE instant is guaranteed newer than everything already in the Op log
+        # (it was just committed) and older than the correction that follows it, so it is the
+        # cutoff that isolates this test's own correction. A coarser back-date (e.g. rewinding a
+        # whole year) would also predate real CORRECT_COSMETIC ops on notes still in the corpus,
+        # making `_corrected_since` see those too and defeating the "since deleted" check below.
         db.command("UPDATE KnnCache SET built_at = :t",
-                   {"t": notelib.id_to_created_at(recut.op_id).replace("2026", "2025", 1)})
+                   {"t": notelib.id_to_created_at(victim_note.op_id)})
         st = notelib.knn_cache_status(db)
         check("a CORRECT_COSMETIC newer than the build marks the cache stale", st["stale"],
               "; ".join(st["reasons"]))
