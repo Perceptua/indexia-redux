@@ -148,7 +148,7 @@ Each capability has a fuller how-to below: [Ingestion](#ingestion) · [Embedding
 | `drop-db.sh <db>` | Drop a scratch/restored database; refuses to touch the live one. |
 | `console.sh` | Interactive ArcadeDB SQL console. |
 | `smoke-test.sh` | End-to-end check: insert + `vector.neighbors` + `BEGETS` traversal (self-cleaning). |
-| `add-note.sh` | Ingest one note (workflow 1); also `--correct` (in-place cosmetic fix). See Ingestion. |
+| `add-note.sh` | Ingest one note (workflow 1); also `--correct` (in-place fix to body and/or title/author/source_ref). See Ingestion. |
 | `ingest-staging.sh [--dry-run]` | Ingest id-named files dropped in `staging/` (workflow 2). |
 | `transcribe-scans.sh [scan]` | Workflow 3 from the shell: opens an interactive `claude` session straight into the `transcribe-notes` skill, over everything waiting in `staging/scans/` or one named scan; ratified notes land in `staging/`. Runs with `--permission-mode bypassPermissions`. See Ingestion and the `staging/scans/` drop zone under [Graph UI](#graph-ui). |
 | `review-transcripts.sh [transcript]` | Workflow 4 from the shell: opens an interactive `claude` session straight into the `review-transcripts` skill, over everything waiting in `staging/transcripts/` or one named transcript; ratified notes land in `staging/`. Runs with `--permission-mode bypassPermissions`. See Ingestion. |
@@ -253,15 +253,19 @@ notes. What the correction means for the lineage that produced the target is a q
 [Analytics](#analytics-measuring-the-graph).
 
 **Cosmetic fixes (in-place).** A typo or formatting fix that doesn't change *meaning* is the one allowed
-in-place edit (spec §6, `CORRECT_COSMETIC`):
+in-place edit (spec §6, `CORRECT_COSMETIC`). `title`, `author`, and `source_ref` are correctable the
+same way *(v0.8.7)*, since they're metadata rather than the thing the embedding measures:
 
 ```bash
-bash scripts/add-note.sh --correct 20260722T101500000Z --body "…the same idea, typo fixed."
+bash scripts/add-note.sh --correct 20260722T101500000Z --body "…the same idea, typo fixed." \
+  --title "a better title" --author human --source-ref "corrected provenance"
 ```
 
-It's sanity-checked by **embedding drift**: if the new body is too semantically different (drift ≥
+`body` is sanity-checked by **embedding drift**: if the new body is too semantically different (drift ≥
 `--max-drift`, default 0.15) the edit is refused with a nudge to issue a correction instead — a change
-of meaning is a new note plus a ratified `BINDS{inhibits}`, not an edit. On success the note is re-embedded and an `Op(CORRECT_COSMETIC)` logged.
+of meaning is a new note plus a ratified `BINDS{inhibits}`, not an edit. `title`/`author`/`source_ref`
+carry no such check. Only the fields you pass are touched; on success the note is re-embedded (if
+`body` changed) and an `Op(CORRECT_COSMETIC)` logged.
 
 **Staged files (workflow 2)** — drop a file named as the note `id` into `staging/` (e.g.
 `20260722T101500000Z.md`) with `name: value` property lines, then ingest. The id is validated and
@@ -731,9 +735,12 @@ one bind in one direction (§7) — said in the panel rather than earned as a 40
 - **`queue`** is the ratification queue: every suggested bind with its claim written out, and the
   four verdicts (`RATIFY_LINK` as catalyzes / corrects / untyped, or `REJECT_LINK`). The machine
   proposes and the human disposes (§8.2), and that split is exactly what the two buttons are.
-- **`edit`** fixes a typo in place (`CORRECT_COSMETIC`) — the corpus's one in-place mutation, and
-  it is refused if the embedding drifts past the threshold. A refusal offers §6's actual remedy in
-  one click: commit the correction as its own note, bound back with a ratified `inhibits`.
+- **`edit`** fixes a typo, title, author, or source in place (`CORRECT_COSMETIC`) — the corpus's
+  one in-place mutation *(title/author/source_ref since v0.8.7)*. A `clean` button below the body
+  strips newline-type characters from it in the editor, on demand only — nothing is sanitized on
+  save. A body change is refused if its embedding drifts past the threshold; a refusal offers §6's
+  actual remedy in one click: commit the correction as its own note, bound back with a ratified
+  `inhibits`.
 - **`inbox`** previews `staging/` through the real dry run and ingests it, filing each file
   under `processed/` or `failed/` exactly as `ingest-staging.sh` does. It also takes **file
   drops** — see below.
@@ -1193,7 +1200,7 @@ live-validated (ingestion → read + links + move 1 → the signed associative l
 communities & autocatalysis → the maintenance loop → the analytics split). The last spec'd v1 pieces
 are wired too:
 
-- **`CORRECT_COSMETIC`** (§6, §12.3) — `add-note --correct <id>`, the *only* in-place edit, guarded by embedding drift (≥ threshold ⇒ refused → issue a correction instead).
+- **`CORRECT_COSMETIC`** (§6, §12.3) — `add-note --correct <id>`, the *only* in-place edit. `body` is guarded by embedding drift (≥ threshold ⇒ refused → issue a correction instead); `title`/`author`/`source_ref` are correctable the same way, unguarded *(v0.8.7)*.
 - **`PROMOTE_TYPE`** (§3.3, §12.3) — `promote-type.sh` registers a new vertex/edge type (schema growth / "unprestatability").
 
 **Analytics separated from operations** *(v0.8.0, §13)*. The graph is now purely relational: `Note`

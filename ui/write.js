@@ -132,7 +132,8 @@ function bindActions(edge) {
 
 const editButton = (noteId) => (on ? `<div class="verdict">${button(
   'edit', { 'data-id': noteId }, 'edit',
-  'fix a typo in place — refused if it changes what the note means (§6)')}</div>` : '');
+  'fix a typo, title, author or source in place — refused if it changes what the body '
+  + 'means (§6)')}</div>` : '');
 
 const composeFrom = (noteId) => (on ? `<h3>write from here</h3><div class="verdict">
   ${button('compose', { 'data-parent': noteId, 'data-mode': 'continue' }, 'continue')}
@@ -231,22 +232,70 @@ function driftRemedy(data) {
 }
 
 // ---- edit in place ---------------------------------------------------------
+/* Newline-type characters only — CR, LF, and the two Unicode line/paragraph separators, plus
+ * vertical tab and form feed. Collapsed to a single space each (not deleted outright) so words
+ * either side of a line break do not run together, then repeated spaces that leaves behind are
+ * flattened to one. Applied only when the button is pressed, and only to the textarea's current
+ * value — never on commit, never anywhere else (the user's call, not an auto-sanitizer's). */
+const stripNewlines = (s) => s.replace(/[\r\n\v\f\u2028\u2029]+/g, ' ').replace(/ {2,}/g, ' ');
+
+/* All four fields, in place. `title`/`source` are their own slots outside `#d-body` (the `<h2>`
+ * and the source line), so each gets its own DOM swap; `body` and `author` keep theirs. Every
+ * slot's original innerHTML is kept for `cancel` to restore verbatim, since #d-source renders
+ * nothing at all when there is no source_ref and textContent alone cannot tell "empty" from
+ * "never had markup". `save` posts all four current values — the server only touches what
+ * actually changed (scripts/notelib.py Ingestor.correct_cosmetic), so re-sending unchanged
+ * fields is a no-op for them, not a second write. */
 function edit(noteId) {
-  const slot = document.querySelector('#d-body');
-  if (!slot || slot.querySelector('textarea')) return;
-  const before = slot.textContent;
-  slot.innerHTML = `<textarea id="e-body" rows="10"></textarea>
+  const titleEl = document.querySelector('#d-title');
+  const authorEl = document.querySelector('#d-author');
+  const sourceEl = document.querySelector('#d-source');
+  const bodyEl = document.querySelector('#d-body');
+  if (!titleEl || !authorEl || !sourceEl || !bodyEl || bodyEl.querySelector('textarea')) return;
+
+  const before = { title: titleEl.innerHTML, author: authorEl.innerHTML,
+                   source: sourceEl.innerHTML, body: bodyEl.innerHTML };
+  const titleNow = titleEl.textContent === '(untitled)' ? '' : titleEl.textContent;
+  const authorNow = authorEl.textContent;
+  const sourceNow = (sourceEl.textContent || '').replace(/^source:\s*/, '');
+  const bodyNow = bodyEl.textContent;
+  const restore = () => {
+    titleEl.innerHTML = before.title;
+    authorEl.innerHTML = before.author;
+    sourceEl.innerHTML = before.source;
+    bodyEl.innerHTML = before.body;
+  };
+
+  titleEl.innerHTML = `<input id="e-title" type="text" value="${ctx.esc(titleNow)}">`;
+  authorEl.innerHTML = `<input id="e-author" type="text" value="${ctx.esc(authorNow)}">`;
+  sourceEl.innerHTML = `<label class="field"><span>source</span>
+    <input id="e-source" type="text" value="${ctx.esc(sourceNow)}"></label>`;
+  bodyEl.innerHTML = `<textarea id="e-body" rows="10"></textarea>
+    <div class="verdict actions">
+      <button type="button" id="e-clean">clean</button>
+      <span class="hint">strip newline-type characters from the body above</span>
+    </div>
     <div class="verdict actions">
       <button type="button" id="e-save" class="on">save</button>
       <button type="button" id="e-cancel">cancel</button>
-      <span class="hint">typos and formatting only</span>
+      <span class="hint">typos, formatting and metadata only — a body edit is refused if it
+        changes what the note means (§6)</span>
     </div>`;
-  const area = slot.querySelector('#e-body');
-  area.value = before;
+  const area = bodyEl.querySelector('#e-body');
+  area.value = bodyNow;
   area.focus();
-  slot.querySelector('#e-cancel').addEventListener('click', () => { slot.textContent = before; });
-  slot.querySelector('#e-save').addEventListener('click', () => run(
-    () => post(`/api/note/${encodeURIComponent(noteId)}/correct`, { body: area.value }),
+
+  bodyEl.querySelector('#e-clean').addEventListener('click', () => {
+    area.value = stripNewlines(area.value);
+  });
+  bodyEl.querySelector('#e-cancel').addEventListener('click', restore);
+  bodyEl.querySelector('#e-save').addEventListener('click', () => run(
+    () => post(`/api/note/${encodeURIComponent(noteId)}/correct`, {
+      body: area.value,
+      title: document.querySelector('#e-title').value,
+      author: document.querySelector('#e-author').value,
+      source_ref: document.querySelector('#e-source').value,
+    }),
     (r) => {
       ctx.selectNode(noteId, false);
       toast(r.op_id ? 'corrected' : 'unchanged — nothing to correct, so nothing was logged');

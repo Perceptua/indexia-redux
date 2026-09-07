@@ -273,6 +273,21 @@ with lib.corpus_guard(db):
               call(f"{base}/api/note/20200101T000000000Z/correct",
                    payload={"body": "x"})[0] == 400)
 
+        code, r = call(f"{base}/api/note/{nid}/correct",
+                       payload={"title": "retitled", "author": "llm_assisted",
+                                "source_ref": "indexia-tests"})
+        check("title/author/source_ref correct in place too — not just body",
+              code == 200 and sorted(r.get("fields") or []) ==
+              ["author", "source_ref", "title"], str(r))
+        op_ids.append(r.get("op_id"))
+        row = notelib.first_row(db.query(
+            "SELECT title, author, source_ref FROM Note WHERE id = :n", {"n": nid}))
+        check("...and the values really landed", row.get("title") == "retitled"
+              and row.get("author") == "llm_assisted"
+              and row.get("source_ref") == "indexia-tests", str(row))
+        check("correcting author to blank is a 400 — Note.author is MANDATORY/NOTNULL",
+              call(f"{base}/api/note/{nid}/correct", payload={"author": "  "})[0] == 400)
+
         # ---- staging --------------------------------------------------------
         code, staged = get(f"{base}/api/staging")
         check("GET /api/staging previews the directory without committing anything",
