@@ -753,7 +753,7 @@ function showNote(id) {
   openPanel(`
     <button type="button" class="close" title="Close (Esc)">×</button>
     <div class="kind">note</div>
-    <h2>${esc(n.title || '(untitled)')}</h2>
+    <h2 id="d-title">${esc(n.title || '(untitled)')}</h2>
     <dl>
       <dt>id</dt><dd class="mono">${esc(n.id)}</dd>
       <dt>address</dt><dd class="mono" id="d-address">…</dd>

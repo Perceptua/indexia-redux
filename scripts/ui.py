@@ -788,13 +788,16 @@ class State:
                        mode=payload.get("mode"))._asdict(), ok=True))
 
     def correct(self, note_id, payload):
-        """CORRECT_COSMETIC ○ — the corpus's one in-place edit (spec §6), and the one write
-        here that must embed inline: the embedding IS the drift measurement, so there is no
-        asynchronous version of it. It is a Python cosine against the stored vector, not a
-        query — this still never touches the LSM_VECTOR index.
+        """CORRECT_COSMETIC ○ — the corpus's in-place edit (spec §6), and the one write here
+        that must embed inline when `body` is among the changed fields: the embedding IS the
+        drift measurement, so there is no asynchronous version of it. It is a Python cosine
+        against the stored vector, not a query — this still never touches the LSM_VECTOR index.
+        Only keys actually present in `payload` are considered changed, so a client that omits
+        title/author/source_ref leaves them untouched.
         """
+        fields = {k: payload[k] for k in notelib.CORRECT_COSMETIC_FIELDS if k in payload}
         return self.write(lambda ing, _links, _wm: dict(
-            ing.correct_cosmetic(note_id, payload.get("body"))._asdict(), ok=True))
+            ing.correct_cosmetic(note_id, fields)._asdict(), ok=True))
 
     def link(self, action, payload):
         """SUGGEST_LINK ● / RATIFY_LINK ○ / RETYPE_LINK ○ / REJECT_LINK ○ (spec §7).

@@ -641,8 +641,11 @@ CommitResult = namedtuple(
 # CORRECT_COSMETIC (§6, §12.3): the one in-place mutation — a typo/formatting fix whose meaning
 # is unchanged, sanity-checked by embedding drift. Drift ≥ the threshold ⇒ meaning changed ⇒ the
 # edit is refused (issue a correction instead). Threshold is a reversible tuning constant (§10).
+# The drift check applies only to `body`: title/author/source_ref are metadata, not the thing the
+# embedding measures, so they're never meaning-changing in the sense this check guards against.
 CORRECT_COSMETIC_MAX_DRIFT = 0.15
-CorrectResult = namedtuple("CorrectResult", "note_id op_id rule drift max_drift reembedded")
+CORRECT_COSMETIC_FIELDS = ("body", "title", "author", "source_ref")
+CorrectResult = namedtuple("CorrectResult", "note_id op_id rule fields drift max_drift reembedded")
 
 
 class CosmeticDriftError(ValueError):
@@ -783,46 +786,74 @@ class Ingestor:
                 skipped.append((n["id"], str(e)))
         return embedded, skipped
 
-    def correct_cosmetic(self, note_id, new_body, max_drift=CORRECT_COSMETIC_MAX_DRIFT):
-        """CORRECT_COSMETIC ○ (spec §6, §12.3) — the ONLY in-place mutation: fix a typo/formatting
-        in `body` without changing meaning, sanity-checked by embedding drift. If the note has a
-        stored embedding and an embedder is available, re-embed the new body and require
-        drift = 1 − cos(old, new) < max_drift, else raise CosmeticDriftError (meaning changed → issue
-        a correction instead). The fresh embedding replaces the old one (the body changed). When drift can't be
-        measured (embedder off, or note pending-embed) the human declaration is trusted. Logs
-        Op(CORRECT_COSMETIC). Returns a CorrectResult; a no-op (body unchanged) has op_id=None."""
+    def correct_cosmetic(self, note_id, fields, max_drift=CORRECT_COSMETIC_MAX_DRIFT):
+        """CORRECT_COSMETIC ○ (spec §6, §12.3) — the in-place mutation: fix a typo/formatting in
+        `body`, or the value of `title`/`author`/`source_ref`, without changing what the note
+        means. `fields` is a dict carrying any subset of CORRECT_COSMETIC_FIELDS; only keys
+        present are touched, so omitting a field leaves it alone. When `body` changes and the
+        note has a stored embedding and an embedder is available, the new body is re-embedded and
+        must have drift = 1 − cos(old, new) < max_drift, else CosmeticDriftError is raised (meaning
+        changed → issue a correction instead); title/author/source_ref carry no such check — they
+        are metadata, not the thing the embedding measures. When drift can't be measured (embedder
+        off, or note pending-embed) the human declaration is trusted. Logs Op(CORRECT_COSMETIC).
+        Returns a CorrectResult; a no-op (nothing actually changed) has op_id=None."""
         validate_id(note_id)
         row = first_row(self.db.query(
-            "SELECT body, embedding FROM Note WHERE id = :id", {"id": note_id}))
+            "SELECT body, title, author, source_ref, embedding FROM Note WHERE id = :id",
+            {"id": note_id}))
         if not row:
             raise ValueError(f"no note {note_id} to correct")
-        new_body = (new_body or "").strip()
-        if not new_body:
-            raise ValueError("body is required (Note.body is MANDATORY/NOTNULL, spec §6)")
-        if new_body == row.get("body"):
-            return CorrectResult(note_id, None, "CORRECT_COSMETIC", 0.0, max_drift, False)
-        old_emb, drift, new_emb = row.get("embedding"), None, None
-        if self.embedder is not None:
-            try:
-                new_emb = self.embedder.embed(new_body)
-            except EmbedderError:
-                new_emb = None                          # can't sanity-check; trust the human (§6)
-            if new_emb is not None and old_emb:
-                drift = round(1.0 - _cosine(old_emb, new_emb.vector), 6)
-                if drift >= max_drift:
-                    raise CosmeticDriftError(note_id, drift, max_drift)
+
+        updates = {}
+        if "body" in fields:
+            new_body = (fields["body"] or "").strip()
+            if not new_body:
+                raise ValueError("body is required (Note.body is MANDATORY/NOTNULL, spec §6)")
+            if new_body != (row.get("body") or ""):
+                updates["body"] = new_body
+        if "author" in fields:
+            new_author = (fields["author"] or "").strip()
+            if not new_author:
+                raise ValueError("author is required (Note.author is MANDATORY/NOTNULL)")
+            if new_author != (row.get("author") or ""):
+                updates["author"] = new_author
+        for opt in ("title", "source_ref"):
+            if opt in fields:
+                new_val = (fields[opt] or "").strip()
+                if new_val != (row.get(opt) or ""):
+                    updates[opt] = new_val or None       # both are nullable — "" clears them
+
+        if not updates:
+            return CorrectResult(note_id, None, "CORRECT_COSMETIC", [], 0.0, max_drift, False)
+
+        drift, new_emb = 0.0, None
+        if "body" in updates:
+            old_emb = row.get("embedding")
+            if self.embedder is not None:
+                try:
+                    new_emb = self.embedder.embed(updates["body"])
+                except EmbedderError:
+                    new_emb = None                      # can't sanity-check; trust the human (§6)
+                if new_emb is not None and old_emb:
+                    drift = round(1.0 - _cosine(old_emb, new_emb.vector), 6)
+                    if drift >= max_drift:
+                        raise CosmeticDriftError(note_id, drift, max_drift)
+
         op_id = unique_id(self.db, format_id(now_utc()), "Op")
         with self.db.transaction():
-            cols, params = ["body = :b"], {"b": new_body, "id": note_id}
+            cols, params = [], {"id": note_id}
+            for col, val in updates.items():
+                cols.append(f"{col} = :{col}")
+                params[col] = val
             if new_emb is not None:
                 cols += ["embedding = :e", "embedding_model = :m", "embedding_dim = :d"]
                 params.update({"e": list(new_emb.vector), "m": new_emb.model, "d": new_emb.dim})
             self.db.command("UPDATE Note SET " + ", ".join(cols) + " WHERE id = :id", params)
             insert_op(self.db, op_id, "CORRECT_COSMETIC",
-                      {"note_id": note_id, "drift": drift, "max_drift": max_drift,
-                       "reembedded": new_emb is not None})
-        return CorrectResult(note_id, op_id, "CORRECT_COSMETIC", drift, max_drift,
-                             new_emb is not None)
+                      {"note_id": note_id, "fields": sorted(updates), "drift": drift,
+                       "max_drift": max_drift, "reembedded": new_emb is not None})
+        return CorrectResult(note_id, op_id, "CORRECT_COSMETIC", sorted(updates), drift,
+                             max_drift, new_emb is not None)
 
 
 def _add_note_payload(note, emb):

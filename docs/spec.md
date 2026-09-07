@@ -438,6 +438,11 @@ In-place mutation of `body` is allowed **only** for cosmetic fixes (typos, forma
 don't change meaning — human-declared, sanity-checked by embedding drift (§10). Any change of
 *meaning* goes through a new note + a ratified `BINDS{inhibits}`.
 
+`title`, `author`, and `source_ref` are also correctable in place *(v0.8.7)*, with no drift
+check: they are metadata about the note, not the thing the embedding measures, so a title fix or
+a corrected provenance pointer is never a claim about what the note means. This does not loosen
+`body`'s guard — the drift check still gates every `body` change exactly as before.
+
 ---
 
 ## 7. Links, embeddings, and the ratification flow
@@ -944,7 +949,7 @@ trail §11.2 referenced). Machine-permitted rules are marked ●; human-only ○
 | `RETYPE_LINK` | `(edge, mode)` | change an existing bind's `mode` | ○ |
 | `REJECT_LINK` | `(edge)` | delete (proposal, not corpus) | either |
 | `EXPIRE_LINKS` | `(max_age, keep_min)` | delete `suggested` links older than `max_age`; skip while the queue is `<= keep_min`; never touch undated or ratified edges (§7). One Op per sweep, not per edge | ● |
-| `CORRECT_COSMETIC` | `(id, body)` | in-place `body` update **iff** embedding drift < ε; log | ○ (only in-place mutation) |
+| `CORRECT_COSMETIC` | `(id, body?, title?, author?, source_ref?)` | in-place update of any subset of these fields — `body` **iff** embedding drift < ε, the rest unchecked (metadata, not meaning); log | ○ (only in-place mutation) |
 | `PROMOTE_TYPE` | `(pattern)` | register a new vertex/edge type (schema growth, §3.3) | ○ |
 | `KNN_CACHE` | `(k)` | rebuild the materialized k-NN layer (§12.1 `KnnCache`); derived data only, the corpus is untouched | ● |
 

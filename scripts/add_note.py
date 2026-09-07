@@ -54,7 +54,8 @@ def main():
     p.add_argument("--parent", help="id of the note this one is begotten by (adds a BEGETS edge)")
     p.add_argument("--mode", help="lineage mode for --parent: continues | branches (spec §4)")
     p.add_argument("--correct", metavar="ID",
-                   help="in-place cosmetic fix of ID's body (typos/formatting only; drift-checked, §6)")
+                   help="in-place fix of ID: --body (typos/formatting only; drift-checked, §6) "
+                   "and/or --title/--author/--source-ref (metadata, unchecked)")
     p.add_argument("--max-drift", type=float, default=notelib.CORRECT_COSMETIC_MAX_DRIFT,
                    dest="max_drift", help="reject --correct if embedding drift ≥ this "
                    "(a meaning change is a correction: add a note, then bind it back "
@@ -70,25 +71,23 @@ def main():
     # now and the background worker embeds it. --embed forces inline; --no-embed forbids.
     embed = True if args.embed else (False if args.no_embed else None)
 
-    fields = {
-        "id": args.id,
-        "title": args.title,
-        "body": read_body(args),
-        "created_at": args.created_at,
-        "author": args.author,
-        "source_ref": args.source_ref,
-    }
-
     # Every workflow commits through the central Ingestor (atomic Note + Op + edges).
     ing = notelib.Ingestor()
 
-    # CORRECT_COSMETIC is the one in-place path (spec §6): a typo/formatting fix, drift-checked.
+    # CORRECT_COSMETIC is the one in-place path (spec §6): body is a drift-checked fix;
+    # title/author/source_ref are metadata, corrected the same way but unchecked.
     if args.correct:
         if args.parent:
             sys.exit("[add-note] --correct is standalone — not with --parent "
                      "(a meaning change is a new note, then a BINDS{inhibits} back to the old)")
+        correct_fields = {opt: getattr(args, opt) for opt in ("title", "author", "source_ref")
+                          if getattr(args, opt) is not None}
+        # A body edit is requested explicitly (--body/--body-file) or by piping stdin with no
+        # metadata flags at all — the pre-v0.8.7 default. Metadata-only flags never touch stdin.
+        if args.body is not None or args.body_file is not None or not correct_fields:
+            correct_fields["body"] = read_body(args)
         try:
-            r = ing.correct_cosmetic(args.correct, fields["body"], max_drift=args.max_drift)
+            r = ing.correct_cosmetic(args.correct, correct_fields, max_drift=args.max_drift)
         except (notelib.CosmeticDriftError, ValueError) as e:
             sys.exit(f"[add-note] {e}")
         except notelib.ArcadeError as e:
@@ -97,13 +96,22 @@ def main():
             import json
             print(json.dumps(r._asdict(), indent=2, ensure_ascii=False))
         elif r.op_id is None:
-            print(f"[add-note] no change — {args.correct} already has that body")
+            print(f"[add-note] no change — {args.correct} already matches")
         else:
             drift = f"drift {r.drift}" if r.drift is not None else "drift unchecked (no embedder/embedding)"
-            print(f"[add-note] CORRECT_COSMETIC Note {r.note_id}  ·  Op {r.op_id}  ·  {drift}"
+            print(f"[add-note] CORRECT_COSMETIC Note {r.note_id}  ·  fields {', '.join(r.fields)}  ·  "
+                  f"Op {r.op_id}  ·  {drift}"
                   f"{', re-embedded' if r.reembedded else ''}")
         return
 
+    fields = {
+        "id": args.id,
+        "title": args.title,
+        "body": read_body(args),
+        "created_at": args.created_at,
+        "author": args.author,
+        "source_ref": args.source_ref,
+    }
     try:
         result = ing.commit(fields, embed=embed, parent=args.parent, mode=args.mode)
     except notelib.DuplicateNote as e:
