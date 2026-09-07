@@ -1548,6 +1548,19 @@ def expire_suggested_links(db, max_age_days=SUGGESTION_MAX_AGE_DAYS,
 # Move 1 is the flagship: "semantically near, graph-far". The others (bridges, implicit
 # themes, contradictions, resurfacing) join here in the later build steps; they all read
 # the four layers and stage SUGGEST_LINK candidates.
+#
+# STAGE_MIN_SCORE is the one number standing between "near" and "worth a decision" — the
+# floor every stager (provoke.py --stage, provocation_digest.py) applies before a move-1
+# candidate reaches the ratification queue. Raised from 0.65 to 0.75 in v0.9: at 0.65 the
+# reader was rejecting most of what reached the queue as lacking a real semantic connection —
+# high cosine similarity is not the same claim as "worth linking". Recalibrated on this
+# corpus (22 notes, `tests/tools/score_dist.sh`): 0.65 admitted 21 of 50 sampled candidates,
+# 0.75 admits 7 — a queue of the few strongest hits instead of a long list to reject. Move
+# past this floor and the *cap* (STAGE_CAP in provocation_digest.py) is what limits how many
+# of those few land per run.
+STAGE_MIN_SCORE = 0.75
+
+
 def graph_neighborhood(db, seed_id, depth=2):
     """Ids within `depth` hops of the seed over BINDS or BEGETS (either
     direction) — the 'graph-near' set move 1 excludes. Includes the seed itself.

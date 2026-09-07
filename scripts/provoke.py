@@ -52,8 +52,11 @@ def main():
     p.add_argument("--depth", type=int, default=2,
                    help="graph-far radius over BINDS/BEGETS (default 2)")
     p.add_argument("--ef", type=int, default=100, help="ANN efSearch breadth (default 100)")
-    p.add_argument("--min-score", dest="min_score", type=float, default=0.0,
-                   help="drop candidates below this cosine score")
+    p.add_argument("--min-score", dest="min_score", type=float,
+                   default=notelib.STAGE_MIN_SCORE,
+                   help=f"drop candidates below this cosine score "
+                        f"(default {notelib.STAGE_MIN_SCORE}, the digest's own staging floor — "
+                        f"pass 0 to preview everything near, unfiltered)")
     p.add_argument("--stage", action="store_true",
                    help="stage each candidate as a SUGGEST_LINK (default: preview only)")
     p.add_argument("--no-cache", action="store_true", dest="no_cache",
