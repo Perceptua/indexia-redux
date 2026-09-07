@@ -44,14 +44,13 @@ OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 OUT_FILE = os.path.join(OUT_DIR, "provocations.md")
 
 # Staging policy (I-5): how much of what the digest finds is allowed into the queue per run.
-STAGE_CAP = 10           # suggestions staged per run, across all seeds and both moves
-# Move-1 similarity floor — below this, "near" isn't near enough to be worth a decision. Measured
-# against the 101-note corpus before picking a number: move-1 scores ran max 0.729, median 0.644,
-# min 0.592, and a 0.70 floor admitted only 4 of 55 candidates. That makes the *floor* the binding
-# constraint rather than STAGE_CAP, which quietly switches move 1 off — the opposite of the point,
-# since volume is the cap's job. 0.65 sits at the knee (26 of 55) and leaves the cap in charge.
-# Raise it if your corpus scores higher; --min-score overrides per run.
-STAGE_MIN_SCORE = 0.65
+# Lowered from 10 in v0.9, alongside raising the floor below: a reader who rejects most of
+# what a nightly run stages wants fewer, stronger candidates, not more chances to reject.
+STAGE_CAP = 5            # suggestions staged per run, across all seeds and both moves
+# Move-1 similarity floor — below this, "near" isn't near enough to be worth a decision. See
+# notelib.STAGE_MIN_SCORE for the calibration behind the current value; --min-score overrides
+# per run.
+STAGE_MIN_SCORE = notelib.STAGE_MIN_SCORE
 
 
 def stage_budget(queued, stage_cap=STAGE_CAP, max_queue=notelib.SUGGESTION_MAX_QUEUE):
@@ -140,7 +139,8 @@ def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
             if staged >= budget:
                 break
             try:
-                lm.suggest(sid, cand["id"], rationale="provocation-digest: near move")
+                lm.suggest(sid, cand["id"],
+                           rationale=f"provocation-digest: near move (score={cand['score']:.3f})")
             except notelib.LinkExists:
                 continue                     # already proposed or ratified — costs no budget
             cand["staged"] = True
