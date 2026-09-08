@@ -787,10 +787,17 @@ function showNote(id) {
 function fillNote(d) {
   const set = (sel, html) => { const el = panel.querySelector(sel); if (el) el.innerHTML = html; };
   set('#d-address', esc(d.folgezettel || '—'));
-  set('#d-author', esc(d.author || '—'));
-  set('#d-body', esc(d.body));
-  set('#d-source', d.source_ref
-    ? `<p class="muted">source: ${esc(d.source_ref)}</p>` : '');
+  // The detail fetch that feeds this races the reader: click `edit` before it lands and these
+  // three swap out from under an open textarea/input, silently discarding whatever was typed.
+  // `#e-body` only exists while write.js's edit() is open (ui/write.js), so its presence is the
+  // signal to leave author/body/source alone until the edit ends (title is never touched here,
+  // so it needs no such guard).
+  if (!panel.querySelector('#e-body')) {
+    set('#d-author', esc(d.author || '—'));
+    set('#d-body', esc(d.body));
+    set('#d-source', d.source_ref
+      ? `<p class="muted">source: ${esc(d.source_ref)}</p>` : '');
+  }
 
   /* A note that is near in meaning but has no edge is exactly move 1's provocation (§8.1), and
    * it is free here — the graph is already on the page. Since v0.8.1 it is also actionable: the
