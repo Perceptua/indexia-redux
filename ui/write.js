@@ -253,6 +253,14 @@ function edit(noteId) {
   const bodyEl = document.querySelector('#d-body');
   if (!titleEl || !authorEl || !sourceEl || !bodyEl || bodyEl.querySelector('textarea')) return;
 
+  // The button that opened this is otherwise still sitting right below #d-source, doing
+  // nothing but reading as a second "edit" affordance while the fields it opens are already
+  // open — hidden for the duration and put back by `restore` on cancel. A save re-renders the
+  // whole panel from scratch (ctx.refresh + ctx.selectNode), which brings it back on its own.
+  const editWrap = Array.from(document.querySelectorAll('[data-write="edit"]'))
+    .find((b) => b.dataset.id === noteId)?.closest('.verdict');
+  if (editWrap) editWrap.hidden = true;
+
   const before = { title: titleEl.innerHTML, author: authorEl.innerHTML,
                    source: sourceEl.innerHTML, body: bodyEl.innerHTML };
   const titleNow = titleEl.textContent === '(untitled)' ? '' : titleEl.textContent;
@@ -264,6 +272,7 @@ function edit(noteId) {
     authorEl.innerHTML = before.author;
     sourceEl.innerHTML = before.source;
     bodyEl.innerHTML = before.body;
+    if (editWrap) editWrap.hidden = false;
   };
 
   titleEl.innerHTML = `<input id="e-title" type="text" value="${ctx.esc(titleNow)}">`;
