@@ -769,6 +769,7 @@ function showNote(id) {
     </div>
     <div class="body" id="d-body">…</div>
     <div id="d-source"></div>
+    <div id="d-actions"></div>
     ${Write.editButton(n.id)}
     ${group('parents', parents)}
     ${group('children', children)}

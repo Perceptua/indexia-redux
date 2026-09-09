@@ -251,7 +251,9 @@ function edit(noteId) {
   const authorEl = document.querySelector('#d-author');
   const sourceEl = document.querySelector('#d-source');
   const bodyEl = document.querySelector('#d-body');
-  if (!titleEl || !authorEl || !sourceEl || !bodyEl || bodyEl.querySelector('textarea')) return;
+  const actionsEl = document.querySelector('#d-actions');
+  if (!titleEl || !authorEl || !sourceEl || !bodyEl || !actionsEl
+      || bodyEl.querySelector('textarea')) return;
 
   // The button that opened this is otherwise still sitting right below #d-source, doing
   // nothing but reading as a second "edit" affordance while the fields it opens are already
@@ -272,6 +274,7 @@ function edit(noteId) {
     authorEl.innerHTML = before.author;
     sourceEl.innerHTML = before.source;
     bodyEl.innerHTML = before.body;
+    actionsEl.innerHTML = '';
     if (editWrap) editWrap.hidden = false;
   };
 
@@ -283,7 +286,11 @@ function edit(noteId) {
     <div class="verdict actions">
       <button type="button" id="e-clean">clean</button>
       <span class="hint">strip newline-type characters from the body above</span>
-    </div>
+    </div>`;
+  // save/cancel sit in their own slot after title/author/source/body (#d-actions, app.js) —
+  // stuffing them into #d-body's innerHTML would put them between body and source, since
+  // #d-body precedes #d-source in the panel markup.
+  actionsEl.innerHTML = `
     <div class="verdict actions">
       <button type="button" id="e-save" class="on">save</button>
       <button type="button" id="e-cancel">cancel</button>
@@ -297,8 +304,8 @@ function edit(noteId) {
   bodyEl.querySelector('#e-clean').addEventListener('click', () => {
     area.value = stripNewlines(area.value);
   });
-  bodyEl.querySelector('#e-cancel').addEventListener('click', restore);
-  bodyEl.querySelector('#e-save').addEventListener('click', () => run(
+  actionsEl.querySelector('#e-cancel').addEventListener('click', restore);
+  actionsEl.querySelector('#e-save').addEventListener('click', () => run(
     () => post(`/api/note/${encodeURIComponent(noteId)}/correct`, {
       body: area.value,
       title: document.querySelector('#e-title').value,
