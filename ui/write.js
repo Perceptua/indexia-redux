@@ -166,6 +166,10 @@ function compose(opts) {
       <strong>inhibits</strong> — the correction the corpus actually supports (§6).</p>` : ''}
     <label class="field"><span>body</span>
       <textarea id="c-body" rows="10" placeholder="the note itself"></textarea></label>
+    <div class="verdict actions">
+      <button type="button" id="c-clean">clean</button>
+      <span class="hint">strip newline-type characters from the body above</span>
+    </div>
     <label class="field"><span>title</span><input id="c-title" type="text"></label>
     <label class="field"><span>source</span>
       <input id="c-source" type="text" placeholder="where it came from"></label>
@@ -214,6 +218,10 @@ function compose(opts) {
       + (walk ? ' · recorded as produced by this walk' : ''));
   });
 
+  panel.querySelector('#c-clean').addEventListener('click', () => {
+    const area = panel.querySelector('#c-body');
+    area.value = stripNewlines(area.value);
+  });
   panel.querySelector('#c-commit').addEventListener('click', commit);
   panel.querySelector('#c-body').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) commit();
