@@ -1571,17 +1571,45 @@ def graph_neighborhood(db, seed_id, depth=2):
     return {r.get("id") for r in rows(db.query(sql, {"s": seed_id})) if r.get("id")}
 
 
-def move1_candidates(db, seed_id, k=5, ef=100, depth=2, use_cache=True):
+def rejected_pairs(db):
+    """Every a/b pair ever REJECT_LINK'd (spec §8.2's human veto), as a set of
+    frozenset({a, b}). `reject()` deletes the BINDS edge outright (§2.4: a proposal is not
+    corpus), so the graph itself keeps no trace of the decision — only the Op log does. A
+    rejection is not a rate limit or an expiring hold, either: a note's body cannot be edited
+    to a different meaning after the fact (§6), so "no relation" is a stable fact about this
+    pair, not a stale snapshot, and move 1 must not re-propose what a person already declined."""
+    out = set()
+    for r in rows(db.query("SELECT payload FROM Op WHERE rule = 'REJECT_LINK'")):
+        try:
+            payload = json.loads(r.get("payload") or "{}")
+        except (TypeError, ValueError):
+            continue
+        a, b = payload.get("a"), payload.get("b")
+        if a and b:
+            out.add(frozenset((a, b)))
+    return out
+
+
+def move1_candidates(db, seed_id, k=5, ef=100, depth=2, use_cache=True, declined=None):
     """Provocation move 1 (spec §8.1, §8.3): notes semantically near the seed but
     graph-far — high embedding similarity AND no ≤`depth`-hop BINDS/BEGETS path,
-    so it never proposes a link where lineage or an existing link already connects.
-    Returns up to `k` semantic hits (with score) minus the graph-near set. The seed
+    so it never proposes a link where lineage or an existing link already connects, and never
+    one the seed's own side of a `declined` pair has already been told no to (see
+    `rejected_pairs`). Returns up to `k` semantic hits (with score) minus both sets. The seed
     must already be embedded (else ValueError).
 
     Reads the nightly k-NN cache by default (`neighbors_of`), which is what makes the
-    five-move digest affordable; `use_cache=False` forces a live vector query."""
+    five-move digest affordable; `use_cache=False` forces a live vector query.
+
+    `declined` lets a caller looping over many seeds (provocation_digest.py) compute
+    `rejected_pairs(db)` once and reuse it, instead of paying its full Op-log scan per seed;
+    left as None (single-seed callers like provoke.py) it is computed here."""
     near = graph_neighborhood(db, seed_id, depth)         # includes the seed itself
-    return neighbors_of(db, seed_id, k=k, ef=ef, exclude_ids=near, use_cache=use_cache)
+    if declined is None:
+        declined = rejected_pairs(db)
+    declined_ids = {next(iter(pair - {seed_id})) for pair in declined if seed_id in pair}
+    return neighbors_of(db, seed_id, k=k, ef=ef, exclude_ids=near | declined_ids,
+                        use_cache=use_cache)
 
 
 # ---- provocation moves 2–5 (the rest of the difference-engine, spec §8.1) ---
