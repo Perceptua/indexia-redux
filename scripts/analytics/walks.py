@@ -72,11 +72,12 @@ def replay(db, walk_id, k=5, ef=100, depth=2, use_cache=True):
     trail = [v["note_id"] for v in walk["visited"] if v.get("note_id")]
     if not trail and walk.get("seed"):
         trail = [walk["seed"]]        # a walk always visits its seed, so this is belt-and-braces
+    declined = notelib.rejected_pairs(db)      # one Op-log scan, reused across the whole trail
     seen, provocations = set(), []
     for nid in trail:
         try:
             cands = notelib.move1_candidates(db, nid, k=k, ef=ef, depth=depth,
-                                             use_cache=use_cache)
+                                             use_cache=use_cache, declined=declined)
         except (ValueError, notelib.EmbedderError):
             continue                           # unembedded note / embedder off — skip it
         for c in cands:

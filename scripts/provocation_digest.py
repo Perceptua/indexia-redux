@@ -119,11 +119,13 @@ def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
     if wait:
         notelib.wait_for_embeddings(db=db, log=log)      # fail-open; see notelib
     seeds = _seeds(db, seeds_limit)
+    declined = notelib.rejected_pairs(db)      # one Op-log scan, reused across every seed below
     per_seed = []
     for sid in seeds:
         entry = {"seed": sid, "addr": _addr(db, sid), "move1": []}
         try:
-            entry["move1"] = notelib.move1_candidates(db, sid, k=k, use_cache=use_cache)
+            entry["move1"] = notelib.move1_candidates(db, sid, k=k, use_cache=use_cache,
+                                                       declined=declined)
         except (ValueError, notelib.EmbedderError):
             pass
         if entry["move1"]:
