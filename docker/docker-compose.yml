@@ -21,6 +21,13 @@ services:
     container_name: indexia-arcadedb
     restart: on-failure                         # on-demand: recover crashes, no auto-start on host boot
     environment:
+      # Disables the image's default remote-JMX agent (bin/server.sh only applies its
+      # ARCADEDB_JMX default when the var is unset/empty; a bare space is non-empty but
+      # expands to no args). Needed because the default binds an RMI registry against the
+      # container's own hostname, which some Docker networks (e.g. WSL2) can't resolve —
+      # the JVM then dies before the server starts. JMX isn't used for this local single-user
+      # instance, so disabling is simpler than wiring up java.rmi.server.hostname.
+      ARCADEDB_JMX: " "
       JAVA_OPTS: >-
         -Xms${ARCADEDB_HEAP:-1G} -Xmx${ARCADEDB_HEAP:-1G}
         -Darcadedb.server.rootPassword=${ARCADEDB_ROOT_PASSWORD}

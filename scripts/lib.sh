@@ -36,6 +36,30 @@ dc() {
   docker compose -f "$COMPOSE_FILE" "${extra[@]}" "$@"
 }
 
+# Tear down a container that is running but attached to no network, so the caller's `dc up -d`
+# recreates it. When the docker daemon restarts, `restart: on-failure` brings the process back
+# but does not always restore its network endpoint: HostConfig.PortBindings still lists every
+# publish while NetworkSettings.Ports is empty, so the server starts and logs normally and yet
+# nothing is reachable on the host — wait_ready then times out against a healthy-looking log.
+# Whether `dc up -d` recovers on its own depends on how the attachment was lost. Take the
+# network away explicitly (`docker network disconnect`) and the container's stored config loses
+# it too, so compose sees the drift and recreates. Lose only the live endpoint, as a daemon
+# restart does, and the stored config still claims the network: compose finds nothing changed
+# and leaves the broken container running — which is the case actually seen in the wild, and the
+# one this guards. Recreating unconditionally on an empty attachment covers both, and costs a
+# redundant teardown in the variant compose would have handled. Asking compose for the id
+# (rather than naming the container) keeps this in step with docker-compose.yml, and `ps -q`
+# lists running containers only, which is exactly the case worth checking.
+recreate_if_detached() {
+  local cid nets
+  cid="$(dc ps -q arcadedb 2>/dev/null)" || return 0
+  [[ -n "$cid" ]] || return 0
+  nets="$(docker inspect "$cid" --format '{{len .NetworkSettings.Networks}}' 2>/dev/null)" || return 0
+  [[ "$nets" == "0" ]] || return 0
+  log "container is running but attached to no network (stale endpoint after a docker restart) — recreating"
+  dc down
+}
+
 # POST to the DB HTTP API. Prints response body; returns non-zero on HTTP >= 400.
 # Usage: db_post <url> [json-body]
 db_post() {
