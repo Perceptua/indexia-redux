@@ -36,6 +36,10 @@ else
   db_mode_write loopback
 fi
 
+# Compose cannot see this one: a container left running with no network endpoint has an
+# unchanged config hash, so `up -d` would no-op on it and the wait below would fail. See lib.sh.
+recreate_if_detached
+
 log "starting ArcadeDB (docker compose up -d)"
 dc up -d
 
