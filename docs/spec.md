@@ -2,9 +2,15 @@
 
 *A virtual Zettelkasten: a human-curated, append-only knowledge graph with a machine that provokes rather than synthesizes.*
 
-**Status:** Draft v0.8.6 (build-validated) · **Last updated:** 2026-08-02
+**Status:** Draft v0.9.1 (build-validated) · **Last updated:** 2026-11-05
 
-*Changelog: v0.8.6 **the draft leaves the graph** (§12.7, §12.3). `PROPOSE_VARIANT`,
+*Changelog: v0.9.1 **move 1 looks from everywhere, and asks less of any one note** (§8.1, §8.2,
+§10), from backtesting the verdicts so far. The digest now seeds from every embedded note rather
+than the ten newest plus each community's hub, because most eligible pairs were out of reach: 31 of the
+44 left after the first such run could only be found from the wider set. Staging takes at most one pair per note per run,
+because a few notes sit near everything, and the floor drops from 0.75 to 0.70, because only 10 of the
+37 kept binds reach 0.75. A same-author filter was tested and considered, and is not adopted. ·
+v0.8.6 **the draft leaves the graph** (§12.7, §12.3). `PROPOSE_VARIANT`,
 `COMMIT_VARIANT` and `REJECT_VARIANT` are **removed**, and with them `Note.status = 'proposed'`.
 They were built and specified, and in 2267 operations nothing ever called them — because the human
 step they exist to serve happens *before* anything is written: the assistant proposes a draft in
@@ -522,7 +528,8 @@ Each move is a query, surfaced on demand or in a periodic "provocation" view:
 
 1. **Semantically near, graph-far** — high embedding similarity, no short path over `BINDS`
    **or** `BEGETS` (so it won't propose a link where lineage already connects). The flagship
-   "you haven't connected these yet" move; exactly where an emergent link wants to form.
+   "you haven't connected these yet" move; exactly where an emergent link wants to form. The digest
+   asks it of every embedded note *(v0.9.1)*, so any note can start a proposal.
 2. **Bridge candidates** — via community detection on the link graph, a high-betweenness note
    that could join two separate clusters. Structural holes are where original ideas live.
 3. **Implicit themes** — a cluster in semantic space with no matching cluster in the link
@@ -559,6 +566,13 @@ similarity floor below which "near" is not near enough to be worth a human decis
 the point: reading is cheap, deciding is not, and the bounded resource is the human's attention rather
 than the corpus. Staging is single-axis since move 2 (temporally adjacent, §8.1) was removed: only
 move 1 stages candidates, ranked by similarity (nearer is better) and floored at `STAGE_MIN_SCORE`.
+
+**No note takes the whole batch** *(v0.9.1, from backtesting)*. A pair is offered once, however many
+seeds found it, with the newer note first, and a run stages at most `STAGE_PER_NOTE` pairs touching
+any one note. A few notes sit near everything: one appeared in 3 of the top 8 candidates, and another
+in 9 rejected pairs. Without the share, seeding from the whole corpus would let such a note fill the batch.
+A pair already holding an edge costs its notes nothing. As with every limit here, this bounds staging
+only: the digest still renders each candidate under both of its notes.
 
 **A rate is not a bound** *(v0.8.5, from measurement)*. The per-run cap and the §7 expiry are a
 *rate* and a *delay*; neither is a *level*, and only a level bounds a queue. Measured over five
@@ -651,7 +665,7 @@ commitments.
 | **Signed propagation** *(removed v0.8.0)* | Was: ratifying a typed `BINDS` fired a decaying wave along the target's lineage into a stored `activation`. **Gone.** The sign lives on `BINDS.mode` and is read where a question is asked, not smeared across notes in advance (§12.5). Nothing consumed `activation`, and the wave had to be compensated on every retype/reject to stay true. |
 | **Fitness** *(v0.8.0)* | `+ w·(inbound ratified BINDS{catalyzes}) − w·(inbound ratified BINDS{inhibits}) + w·(BEGETS descendants) + w·(visited)`, floored. **Computed on demand, never stored** (§13); the weights are report constants, changeable without a migration. Sign comes only from `BINDS.mode`; the descendants term is **purely positive**, since lineage records what a note produced, never a verdict on it. The v0.7.0 `Trace`-appearance and spawn terms are replaced by `visited`, which counts walks directly. |
 | **Suggestion lifetime** *(v0.6.3)* | Unratified `BINDS` expire after **~30 days**; never swept while the queue is **≤ ~10** edges, and never if undated (§7). Ratified edges are exempt — they are corpus. |
-| **Staging budget** *(v0.6.3, raised v0.9)* | The digest renders everything but stages **~5 suggestions per run**, above a move-1 similarity floor of **~0.75**. Calibrate the floor to the corpus: the v0.6.3 floor of 0.65 was raised after a reader found most of what it staged had no real semantic connection — high cosine similarity is not the same claim as "worth linking". Measured on a 22-note corpus, 0.65 admitted 21 of 50 sampled candidates and 0.75 admits 7 — fewer, stronger candidates rather than a long list to reject. |
+| **Staging budget** *(v0.6.3, raised v0.9, lowered v0.9.1)* | The digest renders everything but stages **~5 suggestions per run**, **at most 1 per note**, above a move-1 similarity floor of **~0.70**. Calibrate the floor to the corpus: the v0.6.3 floor of 0.65 was raised after a reader found most of what it staged had no real semantic connection — high cosine similarity is not the same claim as "worth linking". Measured on a 22-note corpus, 0.65 admitted 21 of 50 sampled candidates and 0.75 admits 7 — fewer, stronger candidates rather than a long list to reject. At 48 notes 0.75 had become too strict: only 10 of 37 kept binds reach it, and the median hand-made bind scores 0.635. 0.70 is a cautious step and an experiment, to be judged against the keep rate it inherited (5 of 47 distinct proposed pairs). |
 | **Vector access path** *(v0.6.3)* | The moves read a **materialized k-NN cache** (§12.1), not the ANN index, because that index rebuilds wholesale per new embedding (§9). A short cached answer is preferred to a complete live one: after move 1 subtracts the graph-near set the cache often yields fewer than *k*, and re-querying for those undoes the caching — one heavily-linked seed otherwise drags a whole run through a rebuild. Live queries only when the cache has no row for the seed. |
 
 **Still genuinely open** (need real usage data or a build-time lookup): the exact embedding
@@ -1253,8 +1267,8 @@ not attempt it, and every report that accepts `--as-of` says so.
 ### 13.4 Where the boundary sits
 
 Community detection is the interesting case, because it runs on **both** sides. The difference-
-engine's move 3 mines the boundaries between communities and the provocation digest seeds itself
-from their hubs (§8.1) — so detection is on the operational path and lives in the operational
+engine's move 3 mines the boundaries between communities and a narrowed digest (`--seeds`) adds their
+hubs to its seeds (§8.1) — so detection is on the operational path and lives in the operational
 library. It qualifies because it *writes nothing*: it reads the graph and returns a grouping.
 
 That is the real test, and it is narrower than "is this a metric". An operation may read anything.

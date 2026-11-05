@@ -1558,7 +1558,12 @@ def expire_suggested_links(db, max_age_days=SUGGESTION_MAX_AGE_DAYS,
 # 0.75 admits 7 — a queue of the few strongest hits instead of a long list to reject. Move
 # past this floor and the *cap* (STAGE_CAP in provocation_digest.py) is what limits how many
 # of those few land per run.
-STAGE_MIN_SCORE = 0.75
+#
+# Lowered to 0.70 in v0.9.1, on 48 notes and the verdicts so far. 0.75 sat above most links the
+# reader actually makes: 10 of the 37 kept binds reach it, and the median hand-made one scores
+# 0.635. Going back to 0.65 would undo the reasoning above, so this is the cautious step, and it is
+# still an experiment: re-check it against the keep rate it inherited (5 of 47 distinct pairs).
+STAGE_MIN_SCORE = 0.70
 
 
 def graph_neighborhood(db, seed_id, depth=2):

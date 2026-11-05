@@ -2,8 +2,7 @@
 """provocation-digest — run all six generativity moves and render them as a digest (spec §8.1,
 §12.6; the v1.1 scheduled provocation surface).
 
-Over a seed set (recent active notes + the hub of each detected community) it runs move 1
-(semantically near, graph-far) per seed, plus the corpus-wide moves 2 (bridges), 3 (implicit
+From every embedded note it runs move 1 (semantically near, graph-far), plus the corpus-wide moves 2 (bridges), 3 (implicit
 themes), 4 (contradiction pairs), 5 (re-encounter) and 6 (structural debt). It writes
 `recent/provocations.md` and, with --stage (the default for the scheduled run), stages move 1
 seed→candidate pairs as SUGGEST_LINK edges for you to ratify. Moves 3/4/6 are rendered as
@@ -20,8 +19,9 @@ Two limits keep the run affordable and its output human-sized:
     reads the nightly k-NN cache, so the run pays one ANN rebuild at most instead of one per
     seed — this is what turned a 36-minute unfinished run into a fast one;
   * it *renders* every candidate it found but *stages* only the strongest few (--stage-cap,
-    --min-score). The digest is a surface to read; the queue is a list to decide. Capping the
-    second without capping the first is the point: a queue nobody can clear ratifies nothing.
+    --min-score, and at most STAGE_PER_NOTE per note). The digest is a surface to read; the queue
+    is a list to decide. Capping the second without capping the first is the point: a queue nobody
+    can clear ratifies nothing.
 
 **The per-run cap does not bound the queue; the ceiling does** (--max-queue, v0.8.5). A cap of 10
 a night is a *rate*, and a rate against a reader who ratifies in occasional bursts is still
@@ -47,6 +47,9 @@ OUT_FILE = os.path.join(OUT_DIR, "provocations.md")
 # Lowered from 10 in v0.9, alongside raising the floor below: a reader who rejects most of
 # what a nightly run stages wants fewer, stronger candidates, not more chances to reject.
 STAGE_CAP = 5            # suggestions staged per run, across all seeds and both moves
+# Per note, per run (v0.9.1). A few notes sit near everything: with the whole corpus seeding, one
+# of them could otherwise fill the batch, and a reader would be asked one question five times.
+STAGE_PER_NOTE = 1
 # Move-1 similarity floor — below this, "near" isn't near enough to be worth a decision. See
 # notelib.STAGE_MIN_SCORE for the calibration behind the current value; --min-score overrides
 # per run.
@@ -86,11 +89,20 @@ def _hubs(db):
     return hubs
 
 
-def _seeds(db, limit):
-    """Seed set: the most recent active notes + the hub of each detected community."""
-    seeds = [r.get("id") for r in notelib.rows(db.query(
-        f"SELECT id FROM Note WHERE status='active' AND embedding IS NOT NULL "
-        f"ORDER BY id DESC LIMIT {int(limit)}")) if r.get("id")]
+def _seeds(db, limit=None):
+    """Seed set: every embedded active note, newest first.
+
+    Until v0.9.1 this was the ten newest plus each community's hub, which left most of the corpus
+    unable to start a proposal: when this shipped, 31 of the 44 pairs eligible after that run's
+    staging could only be reached from the wider set. Serving a seed is a k-NN cache read, so the
+    wider net costs a longer digest rather than an ANN rebuild.
+
+    `limit` narrows it to that older shape (the N newest plus the hubs), for a quick look."""
+    sql = "SELECT id FROM Note WHERE status='active' AND embedding IS NOT NULL ORDER BY id DESC"
+    if limit is None:
+        return [r.get("id") for r in notelib.rows(db.query(sql)) if r.get("id")]
+    seeds = [r.get("id") for r in notelib.rows(db.query(f"{sql} LIMIT {int(limit)}"))
+             if r.get("id")]
     return list(dict.fromkeys(seeds + _hubs(db)))     # dedupe, preserve order
 
 
@@ -103,18 +115,53 @@ def _addr(db, note_id):
 
 def _stage_order(per_seed, min_score):
     """The order candidates are offered to the suggestion queue: strongest move-1 hits first.
-    Returns [(seed_id, candidate), …]."""
-    return sorted(((e["seed"], c) for e in per_seed for c in e["move1"]
-                   if c.get("score", 0) >= min_score),
-                  key=lambda pair: pair[1].get("score", 0), reverse=True)
+    Returns [(seed_id, candidate), …], one entry per pair of notes.
+
+    With the whole corpus seeding, most pairs turn up twice, once from each end. The first sighting
+    is kept, and seeds run newest first, so the newer note leads: that is the reading a verdict of
+    `inhibits` gives the pair (the first note corrects the second, §6)."""
+    seen, offered = set(), []
+    for e in per_seed:
+        for c in e["move1"]:
+            pair = frozenset((e["seed"], c["id"]))
+            if c.get("score", 0) >= min_score and pair not in seen:
+                seen.add(pair)
+                offered.append((e["seed"], c))
+    return sorted(offered, key=lambda item: item[1].get("score", 0), reverse=True)
 
 
-def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
+def _stage(offered, budget, suggest, per_note=STAGE_PER_NOTE):
+    """Walk `offered` in order, staging through `suggest(seed_id, candidate)` until the budget is
+    spent, skipping any pair with a note that has already used its share of this run. Marks what
+    landed and returns how many did.
+
+    A pair that already has an edge (LinkExists) costs nothing: neither the budget nor either
+    note's share, because nothing reached the queue. Takes `suggest` as a parameter so the policy
+    can be pinned without a corpus."""
+    used, staged = {}, 0
+    for sid, cand in offered:
+        if staged >= budget:
+            break
+        if used.get(sid, 0) >= per_note or used.get(cand["id"], 0) >= per_note:
+            continue
+        try:
+            suggest(sid, cand)
+        except notelib.LinkExists:
+            continue
+        cand["staged"] = True
+        used[sid] = used.get(sid, 0) + 1
+        used[cand["id"]] = used.get(cand["id"], 0) + 1
+        staged += 1
+    return staged
+
+
+def build(db, seeds_limit=None, k=5, stage=True, stage_cap=STAGE_CAP,
           min_score=STAGE_MIN_SCORE, max_queue=notelib.SUGGESTION_MAX_QUEUE,
           use_cache=True, wait=True, log=None):
     """Run the six moves and (optionally) stage the best move-1 suggestions, up to whichever is
-    smaller of `stage_cap` and the room left under `max_queue`. Everything found is returned for
-    rendering; only what fits the budget is staged. Returns a result dict."""
+    smaller of `stage_cap` and the room left under `max_queue`, with at most STAGE_PER_NOTE per
+    note. Everything found is returned for rendering; only what fits is staged. Returns a result
+    dict."""
     lm = notelib.LinkManager(db)
     if wait:
         notelib.wait_for_embeddings(db=db, log=log)      # fail-open; see notelib
@@ -137,16 +184,15 @@ def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
     queued = notelib.suggested_link_count(db)
     budget = stage_budget(queued, stage_cap, max_queue)
     if stage:
-        for sid, cand in offered:
-            if staged >= budget:
-                break
-            try:
-                lm.suggest(sid, cand["id"],
-                           rationale=f"provocation-digest: near move (score={cand['score']:.3f})")
-            except notelib.LinkExists:
-                continue                     # already proposed or ratified — costs no budget
-            cand["staged"] = True
-            staged += 1
+        staged = _stage(offered, budget, lambda sid, cand: lm.suggest(
+            sid, cand["id"],
+            rationale=f"provocation-digest: near move (score={cand['score']:.3f})"))
+        # The digest lists a pair under both of its notes, so the mark goes on both listings.
+        landed = {frozenset((sid, c["id"])) for sid, c in offered if c.get("staged")}
+        for e in per_seed:
+            for c in e["move1"]:
+                if frozenset((e["seed"], c["id"])) in landed:
+                    c["staged"] = True
     # Move 6 reads the whole graph once and touches neither the embeddings nor the clock, so it is
     # the cheapest move here. `move6_quiet` is filled only when the list is empty: "nothing is
     # owed" and "lineage is too shallow to measure" are different messages, and a digest read days
@@ -154,7 +200,7 @@ def build(db, seeds_limit=10, k=5, stage=True, stage_cap=STAGE_CAP,
     corpus = common.Corpus(db)
     move6 = debt.report(corpus, limit=k)
     return {"per_seed": per_seed, "staged": staged, "offered": len(offered),
-            "stage_cap": stage_cap, "min_score": min_score,
+            "stage_cap": stage_cap, "per_note": STAGE_PER_NOTE, "min_score": min_score,
             "queued_before": queued, "max_queue": max_queue, "budget": budget,
             "move2": notelib.move2_candidates(db, k=k),
             "move3": notelib.move3_candidates(db, k=k, use_cache=use_cache),
@@ -169,7 +215,7 @@ def render(db, res):
          "_Generated by `scripts/provocation-digest.sh`; overwritten on each run. The machine "
          "proposes; you dispose (spec §8.2). Staged move-1 pairs await `link.sh ratify`._", ""]
     L += [f"_Staged **{res['staged']}** of {res['offered']} eligible pair(s) this run — cap "
-          f"{res['stage_cap']}/run, move-1 floor {res['min_score']:.2f}, queue ceiling "
+          f"{res['stage_cap']}/run and {res['per_note']} per note, move-1 floor {res['min_score']:.2f}, queue ceiling "
           f"{res['max_queue']} ({res['queued_before']} already awaiting a decision). Everything "
           f"found is listed below either way; only what is marked `staged` is in your "
           f"ratification queue._", ""]
@@ -250,7 +296,9 @@ def main():
     p = argparse.ArgumentParser(prog="provocation-digest",
                                 description="Render all six provocation moves (spec §8.1, §12.6).")
     p.add_argument("-k", "--limit", type=int, default=5, help="candidates per move (default 5)")
-    p.add_argument("--seeds", type=int, default=10, help="recent notes to seed from (default 10)")
+    p.add_argument("--seeds", type=int, default=None,
+                   help="seed from only the N newest notes plus each community's hub "
+                        "(default: every embedded note)")
     p.add_argument("--no-stage", action="store_true",
                    help="preview only — do not stage move-1 suggestions")
     p.add_argument("--stage-cap", type=int, default=STAGE_CAP, dest="stage_cap",
@@ -286,7 +334,7 @@ def main():
         notelib.insert_op(db, op_id, "PROVOKE_DIGEST",
                           {"seeds": len(res["per_seed"]), "staged": res["staged"],
                            "offered": res["offered"], "stage_cap": res["stage_cap"],
-                           "min_score": res["min_score"],
+                           "per_note": res["per_note"], "min_score": res["min_score"],
                            "queued_before": res["queued_before"],
                            "max_queue": res["max_queue"], "budget": res["budget"],
                            "move2": len(res["move2"]), "move3": len(res["move3"]),
@@ -304,7 +352,8 @@ def main():
         # both ordinary and only the reason tells them apart in a log read a week later.
         why = (f"queue full at {res['max_queue']}" if not res["budget"] else
                f"room for {res['budget']} under the ceiling of {res['max_queue']}"
-               if res["budget"] < res["stage_cap"] else f"cap {res['stage_cap']}")
+               if res["budget"] < res["stage_cap"]
+               else f"cap {res['stage_cap']}, {res['per_note']} per note")
         print(f"[provocation-digest] wrote {OUT_FILE} · staged {res['staged']} of "
               f"{res['offered']} eligible suggestion(s) ({why}; {res['queued_before']} queued) "
               f"across {len(res['per_seed'])} seed(s)")

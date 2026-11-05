@@ -135,7 +135,7 @@ with lib.corpus_guard(db):
         pd = __import__("provocation_digest")
         for room in (0, 1, 3):
             attempts.clear()
-            res = pd.build(db, seeds_limit=10, k=5, stage=True,
+            res = pd.build(db, k=5, stage=True,
                            max_queue=queued + room, wait=False, use_cache=True)
             want = min(pd.STAGE_CAP, room)
             check(f"with room for {room}, the staging loop stops at {want}",
@@ -144,7 +144,7 @@ with lib.corpus_guard(db):
             check(f"...and room for {room} still renders everything found",
                   res["offered"] > want, f"{res['offered']} eligible")
         attempts.clear()
-        res = pd.build(db, seeds_limit=10, k=5, stage=True, max_queue=queued + 500, wait=False)
+        res = pd.build(db, k=5, stage=True, max_queue=queued + 500, wait=False)
         check("with room to spare the per-run cap is what binds, not the ceiling",
               len(attempts) == pd.STAGE_CAP and res["budget"] == pd.STAGE_CAP,
               f"{len(attempts)} attempt(s), budget {res['budget']}")

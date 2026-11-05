@@ -407,8 +407,8 @@ nobody decides. So three limits hold the queue at human size:
 
 - the digest **stages nothing once 50 suggestions are already standing** (`--max-queue`). This is
   the one that actually bounds it, and it binds from the first run;
-- the digest **stages at most 5 per run** and only above a similarity floor (it still *renders*
-  everything it found — see [Maintenance loop](#maintenance-loop));
+- the digest **stages at most 5 per run**, at most 1 per note, and only above a similarity floor (it
+  still *renders* everything it found — see [Maintenance loop](#maintenance-loop));
 - `scripts/link-expiry.sh` **sweeps `suggested` edges older than 30 days**, weekly. Unratified for a
   month counts as implicitly declined.
 
@@ -990,9 +990,10 @@ bash scripts/resurface.sh                   # weekly re-encounter digest (Op RES
 bash scripts/link-expiry.sh --dry-run       # what the suggestion sweep would delete (Op EXPIRE_LINKS)
 ```
 
-**Staging is capped, rendering is not.** `provocation-digest` lists every candidate it found but stages
-only the strongest **5 per run** (`--stage-cap`), above a move-1 similarity floor of **0.75**
-(`--min-score`), and only while fewer than **50** suggestions are already awaiting a decision
+**Staging is capped, rendering is not.** `provocation-digest` looks outward from **every embedded note**
+(`--seeds N` narrows that to the N newest plus each community's hub), lists every candidate it found, but
+stages only the strongest **5 per run** (`--stage-cap`), at most **1 per note**, above a move-1 similarity
+floor of **0.70** (`--min-score`), and only while fewer than **50** suggestions are already awaiting a decision
 (`--max-queue` — see [Links & provocations](#links--provocations) for why a per-run cap alone does
 not bound a queue). Moves 1 and 2 score on opposite axes — move 1's score is similarity (higher is nearer),
 move 2's is the same cosine read as distance (lower means further apart, which is what makes a note you
