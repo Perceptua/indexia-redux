@@ -734,7 +734,9 @@ one bind in one direction (§7) — said in the panel rather than earned as a 40
   front of you — and it proposes just as narrowly.
 - **`queue`** is the ratification queue: every suggested bind with its claim written out, and the
   four verdicts (`RATIFY_LINK` as catalyzes / corrects / untyped, or `REJECT_LINK`). The machine
-  proposes and the human disposes (§8.2), and that split is exactly what the two buttons are.
+  proposes and the human disposes (§8.2), and that split is exactly what the two buttons are. A
+  verdict leaves the queue open, with the decided row gone and your place in the list kept; the
+  sections below the binds (moves 2–6) catch up the next time the queue is opened.
 - **`edit`** fixes a typo, title, author, or source in place (`CORRECT_COSMETIC`) — the corpus's
   one in-place mutation *(title/author/source_ref since v0.8.7)*. A `clean` button below the body
   strips newline-type characters from it in the editor, on demand only — nothing is sanitized on
