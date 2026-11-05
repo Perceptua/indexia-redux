@@ -12,8 +12,8 @@
 
 const MODES = [
   ['catalyzes', 'catalyzes', 'A feeds B: it enables, extends or supports it'],
-  ['inhibits', 'corrects', 'A corrects B. The direction IS the claim (§6) — if that is '
-    + 'backwards, reject it and suggest it the other way round'],
+  ['inhibits', 'corrects', 'A corrects B. The direction IS the claim (§6), so check it reads '
+    + 'the right way round first'],
   [null, 'untyped', 'related, with no verdict either way'],
 ];
 
@@ -417,6 +417,8 @@ function paintQueue(links) {
       <span class="muted">→</span> ${label(l.b, l.b_title)}</button>
     ${l.rationale ? `<p class="rationale">${ctx.esc(l.rationale)}</p>` : ''}
     <div class="verdict">
+      ${button('reverse', { 'data-a': l.a, 'data-b': l.b }, '⇅ swap',
+               'turn this suggestion around, so the second note comes first — this decides nothing')}
       ${MODES.map(([mode, verb, why]) => button(
         'ratify', { 'data-a': l.a, 'data-b': l.b, 'data-mode': mode }, verb, why)).join('')}
       ${button('reject', { 'data-a': l.a, 'data-b': l.b }, 'reject')}
@@ -747,7 +749,7 @@ async function resumeWalk() {
 
 // ---- wiring ----------------------------------------------------------------
 /* Ratify and reject appear on the queue, the edge panel and the link panel, and where they land
- * depends on which. That is read at the click, not when the write returns, so a verdict given in
+ * depends on which (swap, for now, only on the queue). That is read at the click, not when the write returns, so a verdict given in
  * the queue never turns into a note panel because the reader looked elsewhere in the meantime. */
 function verdict(d, path, payload, said) {
   const fromQueue = ctx.panelSource() === 'queue';
@@ -774,6 +776,9 @@ const ACTIONS = {
    * slots emptying at the moment the bind appeared. */
   suggest: (d) => run(() => post('/api/link/suggest', { a: d.a, b: d.b }),
                       () => { ctx.reselect(d.a); toast('suggested — it is in the queue'); }),
+  // Same landing as a verdict, and the row stays: list() is oldest first and the edge keeps its age.
+  reverse: (d) => verdict(d, '/api/link/reverse', { a: d.a, b: d.b },
+                          (r) => `now reads ${ctx.labelOf(r.a)} → ${ctx.labelOf(r.b)}`),
   // `data-mode` is dropped from the markup when the mode is null (see attrs), so undefined here
   // means untyped — which is a verdict, not an omission, and the server tells the two apart on
   // whether the key is present at all (State.link). Hence the explicit null.

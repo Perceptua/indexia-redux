@@ -219,6 +219,20 @@ with lib.corpus_guard(db):
         check("a second bind on the same pair is a 409 — one relation per pair, either way round",
               call(f"{base}/api/link/suggest", payload={"a": cid, "b": nid})[0] == 409)
 
+        # ---- turning a suggestion around (REVERSE_LINK, spec §7) -------------
+        code, r = call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})
+        check("reverse turns a suggestion around and reports the new direction",
+              code == 200 and r.get("a") == cid and r.get("b") == nid
+              and r.get("status") == "suggested", str(r))
+        op_ids.append(r.get("op_id"))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})
+        check("repeating it from a stale page changes nothing and logs nothing",
+              code == 200 and r.get("a") == cid and r.get("op_id") is None, str(r))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": cid, "b": nid})
+        check("and it turns back the same way",
+              code == 200 and r.get("a") == nid and r.get("b") == cid, str(r))
+        op_ids.append(r.get("op_id"))
+
         code, r = call(f"{base}/api/link/ratify", payload={"a": cid, "b": nid})
         check("ratify resolves the edge either way round and reports the stored direction, "
               "because with inhibits the direction IS the claim (§6)",
@@ -241,6 +255,8 @@ with lib.corpus_guard(db):
         check("retype relabels an existing bind", code == 200 and r.get("mode") == "catalyzes")
         op_ids.append(r.get("op_id"))
 
+        check("a ratified bind cannot be reversed — only a proposal's direction is still open",
+              call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})[0] == 400)
         check("an unknown link action is a 400",
               call(f"{base}/api/link/frobnicate", payload={"a": nid, "b": cid})[0] == 400)
         check("a link with only one endpoint is a 400",

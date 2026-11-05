@@ -9,7 +9,9 @@
 than the ten newest plus each community's hub, because most eligible pairs were out of reach: 31 of the
 44 left after the first such run could only be found from the wider set. Staging takes at most one pair per note per run,
 because a few notes sit near everything, and the floor drops from 0.75 to 0.70, because only 10 of the
-37 kept binds reach 0.75. A same-author filter was tested and considered, and is not adopted. ·
+37 kept binds reach 0.75. A same-author filter was tested and considered, and is not adopted. A pair is offered once, so its
+direction is the machine's guess, and `REVERSE_LINK` lets the human turn a suggestion around before
+deciding it (§7), without the standing veto a rejection would leave. ·
 v0.8.6 **the draft leaves the graph** (§12.7, §12.3). `PROPOSE_VARIANT`,
 `COMMIT_VARIANT` and `REJECT_VARIANT` are **removed**, and with them `Note.status = 'proposed'`.
 They were built and specified, and in 2267 operations nothing ever called them — because the human
@@ -460,6 +462,13 @@ as the human recognizes relationships.
 edge with `status = suggested`. Ratification flips it to `status = ratified`; rejection deletes
 it. This keeps links genuinely emergent and human-owned while letting the machine do the tedious
 recall of *candidate* connections.
+
+**A proposal's direction is the human's to set** *(v0.9.1)*. The machine picks which note comes first
+(the newer one, §8.2), which is a guess, and on an `inhibits` verdict the direction is the claim (§6).
+So a suggestion can be turned around before it is decided (`REVERSE_LINK`, §12.3). That is not a
+rejection: `REJECT_LINK` then `SUGGEST_LINK` would reach the same edge, but would log a standing veto on
+a pair nobody has declined. A ratified bind is a claim, and does not turn; it is rejected and
+suggested again.
 
 **Typed only by a human** *(v0.7.0)*. `BINDS.mode` is optional and defaults to null. That is not
 an oversight but the division of labour restated: the machine can see that two notes are near
@@ -959,6 +968,7 @@ trail §11.2 referenced). Machine-permitted rules are marked ●; human-only ○
 |------|-----------|--------|-----|
 | `ADD_NOTE` | `(parent_id?, mode, body, author)` | insert `Note(active)`; if `parent_id`, add `BEGETS{mode}`; embed; log (address is computed lazily, §4) | ○ (human commits) |
 | `SUGGEST_LINK` | `(a, b, rationale, mode?)` | `BINDS{status:suggested, created_at, rationale}`. The machine may only propose **untyped** (§7) | ● |
+| `REVERSE_LINK` | `(a, b)` | turn a `suggested` a→b into b→a, keeping `created_at` and `rationale`; no state changed (already b→a) logs nothing; a ratified bind is refused (§7) | ○ |
 | `RATIFY_LINK` | `(edge, mode?)` | set `ratified`, optionally assign `mode` | ○ |
 | `RETYPE_LINK` | `(edge, mode)` | change an existing bind's `mode` | ○ |
 | `REJECT_LINK` | `(edge)` | delete (proposal, not corpus) | either |

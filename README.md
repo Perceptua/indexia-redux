@@ -359,12 +359,13 @@ Associative links (`BINDS`) are the emergent, human-ratified graph (spec §7) �
 `BEGETS` lineage that `add-note --parent` builds. The machine only ever **proposes** a link; you
 **ratify** or **reject** it (the "communication partner, not compiler" boundary, §8.2).
 
-**Ratification flow — `scripts/link.sh`** (and the underlying `SUGGEST_LINK ● / RATIFY_LINK ○ / REJECT_LINK`
-rules, §12.3):
+**Ratification flow — `scripts/link.sh`** (and the underlying `SUGGEST_LINK ● / REVERSE_LINK ○ / RATIFY_LINK ○ /
+REJECT_LINK` rules, §12.3):
 
 ```bash
 bash scripts/link.sh suggest <a> <b> --rationale "both about emergence"   # stage a suggested bind a→b
 bash scripts/link.sh list --status suggested                              # review pending proposals
+bash scripts/link.sh reverse <a> <b>                                      # turn a suggested a→b into b→a
 bash scripts/link.sh ratify <a> <b> --mode catalyzes                      # accept it, and say how
 bash scripts/link.sh retype <a> <b> --mode inhibits                       # change your mind later
 bash scripts/link.sh reject <a> <b>                                       # delete it (a proposal isn't corpus, §2.4)
@@ -698,10 +699,10 @@ to reorder on a whim. The tooltip says which case you are in, because they are i
 reasons.
 
 With a **`BINDS`** it is inert outright: the panel renders from the edge's **stored** direction, so
-reordering two labels would change nothing while appearing to. Turning it around for real is
-`REJECT_LINK` then `SUGGEST_LINK` the other way — two `Op`s, one of which deletes a proposal — and
-that is not something a hinge between two slots should do quietly. The tooltip points at the
-`reject` sitting directly below it; reject, and the swap frees up with both notes still in place.
+reordering two labels would change nothing while appearing to. A suggestion turns around from its row
+in `queue` (`REVERSE_LINK`). A ratified bind takes `REJECT_LINK` then `SUGGEST_LINK` the other way —
+two `Op`s, one of which removes a claim — and that is not something a hinge between two slots should
+do quietly. The tooltip names whichever applies.
 
 With a **`BEGETS`** flipping *would* change what gets proposed, and that is precisely why it should
 not be one click. Lineage cannot be reversed, so a bind against its grain is an assertion about a
@@ -734,7 +735,9 @@ one bind in one direction (§7) — said in the panel rather than earned as a 40
   front of you — and it proposes just as narrowly.
 - **`queue`** is the ratification queue: every suggested bind with its claim written out, and the
   four verdicts (`RATIFY_LINK` as catalyzes / corrects / untyped, or `REJECT_LINK`). The machine
-  proposes and the human disposes (§8.2), and that split is exactly what the two buttons are. A
+  proposes and the human disposes (§8.2), and that split is exactly what the two buttons are. Beside
+  them, **⇅ swap** turns a suggestion around (`REVERSE_LINK`) so the claim reads the way you mean it,
+  without deciding anything, keeping its place in the list and its age in the expiry sweep. A
   verdict leaves the queue open, with the decided row gone and your place in the list kept; the
   sections below the binds (moves 2–6) catch up the next time the queue is opened.
 - **`edit`** fixes a typo, title, author, or source in place (`CORRECT_COSMETIC`) — the corpus's
@@ -1070,7 +1073,7 @@ SELECT FROM Op WHERE rule = 'RATIFY_LINK' ORDER BY id DESC; -- inspect a rule's 
 ```
 
 The rule grammar, as built: `ADD_NOTE`, `EMBED`, `CORRECT_COSMETIC`,
-`SUGGEST_LINK`/`RATIFY_LINK`/`RETYPE_LINK`/`REJECT_LINK`/`EXPIRE_LINKS`,
+`SUGGEST_LINK`/`REVERSE_LINK`/`RATIFY_LINK`/`RETYPE_LINK`/`REJECT_LINK`/`EXPIRE_LINKS`,
 `START_WALK`/`VISIT`/`PRODUCE`/`SAVE_WALK`/`FORK_WALK`/`DELETE_WALK`,
 `PROVOKE_DIGEST`, `RESURFACE`, `KNN_CACHE`, `PROMOTE_TYPE`, `BACKFILL_LINK_DATES`,
 `MIGRATE_V0_8_0`. (`seed-binds.sh` has no rule of its own — it replays a manifest as real

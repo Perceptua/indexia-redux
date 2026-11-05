@@ -1297,7 +1297,7 @@ class LinkExists(ValueError):
 
 class LinkManager:
     """The BINDS ratification flow (spec §7): SUGGEST_LINK ● (machine proposes), then
-    RATIFY_LINK / RETYPE_LINK / REJECT_LINK ○ (human disposes). Mirrors Ingestor — every
+    REVERSE_LINK / RATIFY_LINK / RETYPE_LINK / REJECT_LINK ○ (human disposes). Mirrors Ingestor — every
     mutation runs in one transaction that also appends its Op (§12.3).
 
     Every method here writes edge properties and nothing else. Ratifying a typed edge is
@@ -1387,6 +1387,54 @@ class LinkManager:
         self.db.atomically(_do)
         return LinkResult("RETYPE_LINK", src, dst, status, new_mode, op_id)
 
+    def reverse(self, a, b):
+        """REVERSE_LINK ○ — turn a suggested a→b around so it reads b→a, and log Op(REVERSE_LINK).
+
+        On an `inhibits` verdict the direction IS the claim (§6), and a proposal's direction is only
+        the machine's guess, so the human gets to set it before deciding. REJECT_LINK then
+        SUGGEST_LINK would also turn it around, but a logged rejection is a standing veto
+        (`rejected_pairs`), and this pair has not been declined.
+
+        Unlike its neighbours this reads its arguments in order: they name the direction being
+        turned away from. A page showing a stale row therefore cannot flip the edge back: if it
+        already reads b→a there is nothing to do, and no Op (§12.3). Only a proposal can turn. A
+        ratified bind is a claim someone made, so changing its direction stays two deliberate acts.
+
+        ArcadeDB edges cannot change endpoints, so the edge is re-created in one transaction.
+        `created_at` carries over, because turning a suggestion around is not a reason to give it
+        another month before the expiry sweep, and it reads back in the space-separated form that
+        would store as null if written straight back (see format_created_at)."""
+        row = first_row(self.db.query(
+            "SELECT outV().id AS src, inV().id AS dst, status, mode, rationale, created_at "
+            "FROM BINDS WHERE (outV().id=:a AND inV().id=:b) OR (outV().id=:b AND inV().id=:a)",
+            {"a": a, "b": b}))
+        src, dst, status = row.get("src"), row.get("dst"), row.get("status")
+        if not src:
+            raise ValueError(f"no BINDS edge between {a} and {b} to reverse")
+        if status != "suggested":
+            raise ValueError(f"the bind between {a} and {b} is {status}, and only a suggestion can "
+                             f"be reversed — to turn a claim around, reject it and suggest it the "
+                             f"other way round")
+        mode = row.get("mode")
+        if (src, dst) == (b, a):
+            return LinkResult("REVERSE_LINK", src, dst, status, mode, None)
+        born = row.get("created_at")
+        born = str(born).replace(" ", "T").rstrip("Z") + "Z" if born else None
+        op_id = unique_id(self.db, format_id(now_utc()), "Op")
+        def _do():
+            self.db.command("DELETE FROM BINDS WHERE outV().id=:a AND inV().id=:b",
+                            {"a": src, "b": dst})
+            self.db.command(
+                "CREATE EDGE BINDS FROM (SELECT FROM Note WHERE id=:a) "
+                "TO (SELECT FROM Note WHERE id=:b) "
+                "SET status=:s, created_at=:at, mode=:m, rationale=:r",
+                {"a": dst, "b": src, "s": status, "at": born, "m": mode,
+                 "r": row.get("rationale")})
+            insert_op(self.db, op_id, "REVERSE_LINK", {"a": dst, "b": src, "was_a": src,
+                                                       "was_b": dst})
+        self.db.atomically(_do)
+        return LinkResult("REVERSE_LINK", dst, src, status, mode, op_id)
+
     def reject(self, a, b):
         """REJECT_LINK — delete the a↔b BINDS (a proposal is not corpus, §2.4) and log
         Op(REJECT_LINK). Primarily for `suggested` edges; also un-links a ratified one, in
@@ -1408,7 +1456,7 @@ class LinkManager:
         """BINDS edges with their endpoint ids/titles, optionally filtered by status and/or
         mode (pass mode=None to select only untyped edges). `created_at` is null on edges
         staged before the property existed (see scripts/link_expiry.py — undated edges are
-        never swept)."""
+        never swept). Oldest first, so a row keeps its place when `reverse` re-creates its edge."""
         sql = ("SELECT status, mode, rationale, created_at, outV().id AS a, inV().id AS b, "
                "outV().title AS a_title, inV().title AS b_title FROM BINDS")
         where, params = [], {}
@@ -1422,7 +1470,7 @@ class LinkManager:
                 params["m"] = m
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += f" LIMIT {int(limit)}"
+        sql += f" ORDER BY created_at LIMIT {int(limit)}"
         return rows(self.db.query(sql, params or None))
 
     def _edge(self, a, b):

@@ -16,6 +16,7 @@ bind fires the signed activation wave back along the target's lineage (§12.5).
 
 Subcommands:
   suggest A B [--rationale "…"] [--mode M]   stage BINDS{suggested} A→B   (SUGGEST_LINK ●)
+  reverse A B                                turn a suggested A→B into B→A (REVERSE_LINK ○)
   ratify  A B [--mode M] [--rationale "…"]   ratify it, setting the mode  (RATIFY_LINK ○)
   retype  A B --mode M                       change an existing bind's mode (RETYPE_LINK ○)
   reject  A B                                delete it (un-link)          (REJECT_LINK)
@@ -97,12 +98,16 @@ def main():
     pj.add_argument("a", help="one endpoint id")
     pj.add_argument("b", help="the other endpoint id")
 
+    pv = sub.add_parser("reverse", help="turn a suggested BINDS A→B into B→A")
+    pv.add_argument("a", help="the note it currently runs from")
+    pv.add_argument("b", help="the note it currently runs to")
+
     pl = sub.add_parser("list", help="list BINDS edges")
     pl.add_argument("--status", help="suggested | ratified")
     pl.add_argument("--mode", help=MODE_HELP)
     pl.add_argument("-k", "--limit", type=int, default=100, help="max edges (default 100)")
 
-    for q in (ps, pr, pt, pj, pl):
+    for q in (ps, pr, pt, pj, pv, pl):
         q.add_argument("--json", action="store_true", help="print the result as JSON")
     args = p.parse_args()
 
@@ -121,6 +126,8 @@ def main():
             result = lm.ratify(args.a, args.b, mode=mode, rationale=args.rationale)
         elif args.cmd == "retype":
             result = lm.retype(args.a, args.b, args.mode)
+        elif args.cmd == "reverse":
+            result = lm.reverse(args.a, args.b)
         else:
             result = lm.reject(args.a, args.b)
     except notelib.LinkExists as e:

@@ -23,7 +23,7 @@ Serves a small static page that draws the graph, and the JSON it reads and write
     GET  /api/health
     POST /api/note                      ADD_NOTE
     POST /api/note/<id>/correct         CORRECT_COSMETIC
-    POST /api/link/<action>             SUGGEST_LINK | RATIFY_LINK | RETYPE_LINK | REJECT_LINK
+    POST /api/link/<action>             SUGGEST_LINK | REVERSE_LINK | RATIFY_LINK | RETYPE_LINK | REJECT_LINK
     POST /api/walk/<action>             START_WALK | VISIT | PRODUCE | SAVE_WALK
     POST /api/staging/ingest            ADD_NOTE, in a batch
     POST /api/upload                    a file into staging/ or staging/scans/ — no Op, see State.upload
@@ -112,7 +112,7 @@ MAX_BODY = 1 << 20       # 1 MiB — a note is prose somebody typed, and prose d
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 # Always allowed. --tailscale adds exactly one more name at runtime — the provisioned MagicDNS
 # FQDN, on Handler.allowed_host — never a wildcard; see Handler._host_allowed.
-LINK_ACTIONS = ("suggest", "ratify", "retype", "reject")
+LINK_ACTIONS = ("suggest", "reverse", "ratify", "retype", "reject")
 # The four a button can reach, and since v0.8.3 that is four of the five a walk has: `fork` and
 # `delete` are decisions about a walk you are no longer taking, and belong wherever past walks are
 # listed — which is nowhere in this view yet. They stay on walk.sh.
@@ -800,7 +800,7 @@ class State:
             ing.correct_cosmetic(note_id, fields)._asdict(), ok=True))
 
     def link(self, action, payload):
-        """SUGGEST_LINK ● / RATIFY_LINK ○ / RETYPE_LINK ○ / REJECT_LINK ○ (spec §7).
+        """SUGGEST_LINK ● / REVERSE_LINK ○ / RATIFY_LINK ○ / RETYPE_LINK ○ / REJECT_LINK ○ (spec §7).
 
         `mode` is forwarded only when the request actually carried the key. `ratify` draws a
         distinction json.loads cannot — leaving the mode alone versus setting it to untyped —
@@ -818,6 +818,8 @@ class State:
         def run(_ing, links, _wm):
             if action == "suggest":
                 r = links.suggest(a, b, rationale=rationale, mode=mode)
+            elif action == "reverse":
+                r = links.reverse(a, b)
             elif action == "ratify":
                 r = (links.ratify(a, b, mode=mode, rationale=rationale) if has_mode
                      else links.ratify(a, b, rationale=rationale))
