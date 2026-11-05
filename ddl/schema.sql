@@ -131,7 +131,8 @@ CREATE EDGE TYPE BINDS IF NOT EXISTS;
 CREATE PROPERTY BINDS.mode STRING;            -- catalyzes | inhibits | null = untyped, neutral
 CREATE PROPERTY BINDS.status STRING;          -- suggested | ratified (§7)
 -- When the edge was staged; ages the suggestion queue for the expiry sweep (§7). Written once at
--- CREATE by LinkManager.suggest and never updated — but deliberately NOT hardened READONLY like
+-- CREATE by LinkManager.suggest and never changed (LinkManager.reverse re-creates the edge with the
+-- same value) — but deliberately NOT hardened READONLY like
 -- Note.created_at, because scripts/backfill_link_dates.py must be able to date edges that predate
 -- this property (and re-date them after restoring an older backup). Undated edges are never
 -- swept, so leaving that repair path open is what keeps them mortal.

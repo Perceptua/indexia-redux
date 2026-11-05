@@ -156,6 +156,7 @@ with lib.corpus_guard(db):
           notelib.suggested_link_count(db) == queued, f"{notelib.suggested_link_count(db)}")
 
     # --- turning a suggestion around -------------------------------------------------------------
+    # (A ratified bind turns the same way; test_ui_write.py covers what it does to the claim.)
     # REVERSE_LINK has to leave everything but the direction alone. The two easy ways to get that
     # wrong are both quiet: a re-created edge that loses its age, because created_at reads back in a
     # form that stores as null, or one that jumps to the end of the queue under the reader's pointer.

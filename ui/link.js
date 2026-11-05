@@ -168,8 +168,8 @@ function paintAction() {
           + 'them'}. Which is also why <strong>⇅ swap</strong> is greyed out: the order here
         decides nothing now. ${mine
     ? 'To turn the proposal around, use <strong>⇅ swap</strong> on its row in the queue.'
-    : 'Turning the bind around means <strong>reject</strong>ing it and suggesting it the other '
-      + 'way round.'}</p>
+    : 'To turn the bind around, click its edge on the map and use <strong>⇅ swap</strong> there.'}
+        </p>
       ${ctx.bindActions(bound)}`;
     ctx.bindWrites(host);
     return;
@@ -203,8 +203,9 @@ function paintAction() {
  *
  * With a BINDS, flipping is inert outright: the action area renders from the edge's *stored*
  * direction, so reordering two labels would change nothing while appearing to. A suggestion turns
- * around from its row in the queue (REVERSE_LINK); a ratified bind only by reject-then-suggest, two
- * Ops that a ⇅ should not perform quietly. The title points at whichever applies.
+ * around from its row in the queue and a ratified bind from its own edge panel (both REVERSE_LINK),
+ * not from here: changing a claim's direction should come from looking at the edge. The title points
+ * at whichever applies.
  *
  * With a BEGETS, flipping would genuinely change what gets proposed, and that is exactly why it
  * should not be one click. Lineage cannot be reversed at all, so proposing a bind against its
@@ -226,7 +227,7 @@ function paintSwap() {
          them again the other way round if you mean to propose against it`
       : `these two are already bound, so the order here no longer decides anything — to reverse
          it, ${pinned.status === 'ratified'
-    ? 'reject the bind below and pick them the other way round'
+    ? 'click its edge on the map and use ⇅ swap there'
     : 'use ⇅ swap on its row in the queue'}`).replace(/\s+/g, ' ');
 }
 

@@ -365,7 +365,7 @@ REJECT_LINK` rules, §12.3):
 ```bash
 bash scripts/link.sh suggest <a> <b> --rationale "both about emergence"   # stage a suggested bind a→b
 bash scripts/link.sh list --status suggested                              # review pending proposals
-bash scripts/link.sh reverse <a> <b>                                      # turn a suggested a→b into b→a
+bash scripts/link.sh reverse <a> <b>                                      # turn a→b into b→a, suggested or ratified
 bash scripts/link.sh ratify <a> <b> --mode catalyzes                      # accept it, and say how
 bash scripts/link.sh retype <a> <b> --mode inhibits                       # change your mind later
 bash scripts/link.sh reject <a> <b>                                       # delete it (a proposal isn't corpus, §2.4)
@@ -568,10 +568,10 @@ the nightly digest, and on demand by `analytics.sh debt` (skill: `writing-prompt
 `docs/indexia-prompt-assistant-spec.md`).
 
 **`--as-of <timestamp>`** recomputes against the graph as it stood at that instant, using `created_at`
-on `Note`, `BEGETS` and `BINDS`. One honest limit: `BINDS.status` carries no history, so a past view
-uses each surviving edge's *current* status — a bind ratified today counts as ratified in a view of last
-month, and one rejected since is absent from that view entirely. Note membership and edge existence are
-dated exactly.
+on `Note`, `BEGETS` and `BINDS`. One honest limit: `BINDS.status` and direction carry no history, so a
+past view uses each surviving edge's *current* status and direction — a bind ratified today counts as
+ratified in a view of last month, one reversed today reads reversed there too, and one rejected since is
+absent from that view entirely. Note membership and edge existence are dated exactly.
 
 ## Graph UI
 
@@ -700,9 +700,8 @@ reasons.
 
 With a **`BINDS`** it is inert outright: the panel renders from the edge's **stored** direction, so
 reordering two labels would change nothing while appearing to. A suggestion turns around from its row
-in `queue` (`REVERSE_LINK`). A ratified bind takes `REJECT_LINK` then `SUGGEST_LINK` the other way —
-two `Op`s, one of which removes a claim — and that is not something a hinge between two slots should
-do quietly. The tooltip names whichever applies.
+in `queue`, and a ratified bind from its own panel once you click the edge on the map (both
+`REVERSE_LINK`). The tooltip names whichever applies.
 
 With a **`BEGETS`** flipping *would* change what gets proposed, and that is precisely why it should
 not be one click. Lineage cannot be reversed, so a bind against its grain is an assertion about a
@@ -737,7 +736,9 @@ one bind in one direction (§7) — said in the panel rather than earned as a 40
   four verdicts (`RATIFY_LINK` as catalyzes / corrects / untyped, or `REJECT_LINK`). The machine
   proposes and the human disposes (§8.2), and that split is exactly what the two buttons are. Beside
   them, **⇅ swap** turns a suggestion around (`REVERSE_LINK`) so the claim reads the way you mean it,
-  without deciding anything, keeping its place in the list and its age in the expiry sweep. A
+  without deciding anything, keeping its place in the list and its age in the expiry sweep. A ratified
+  bind has the same button, shown only when you click its edge on the map: it stays ratified and keeps
+  its type, so a `corrects` bind then asserts the correction of the other note. A
   verdict leaves the queue open, with the decided row gone and your place in the list kept; the
   sections below the binds (moves 2–6) catch up the next time the queue is opened.
 - **`edit`** fixes a typo, title, author, or source in place (`CORRECT_COSMETIC`) — the corpus's
@@ -1249,7 +1250,7 @@ What remains is only **deliberate deferrals** and **post-v1 aspirations**.
 - **Autocatalysis & the criticality band are descriptive-only** — the `autocatalytic` flag and the per-community/corpus criticality figures gate no behaviour, and criticality is *observed* rather than regulated (§11.3): the report names the band, you decide what to do about it.
 - **Communities are detected, never ratified** *(v0.8.0)* — there is no `Cluster` node to accept or name. If a theme deserves a name, write a hub note and bind it to the members.
 - **Working-set→product catalysis is not a fitness term** *(v0.8.0)* — `Op(PRODUCE)` still records it, so promoting it back is a report change, not a schema change.
-- **`--as-of` uses each edge's current `BINDS.status`** — edge existence and note membership are dated exactly, but ratification history is not reconstructed (recoverable from `Op(RATIFY_LINK)` if it ever matters).
+- **`--as-of` uses each edge's current `BINDS.status` and direction** — edge existence and note membership are dated exactly, but ratification and reversal history are not reconstructed (recoverable from `Op(RATIFY_LINK)` and `Op(REVERSE_LINK)` if it ever matters).
 - **Embedding model** defaults to `mxbai-embed-large` (1024-dim); the final MTEB pick is left open (swappable via config).
 
 **Post-v1 aspirations** — the §11 "living computer" layer, beyond the build order:

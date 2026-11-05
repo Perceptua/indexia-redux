@@ -248,6 +248,19 @@ with lib.corpus_guard(db):
               code == 200 and r.get("mode") == "inhibits", str(r.get("mode")))
         op_ids.append(r.get("op_id"))
 
+        check("while it reads new→old, the second note is the one being corrected",
+              cid in notelib.inhibited_note_ids(db) and nid not in notelib.inhibited_note_ids(db))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})
+        check("a ratified bind can be turned around, and stays ratified with its type",
+              code == 200 and (r.get("a"), r.get("b")) == (cid, nid)
+              and r.get("status") == "ratified" and r.get("mode") == "inhibits", str(r))
+        op_ids.append(r.get("op_id"))
+        check("the correction now falls on the other note, with nothing else to update (§13)",
+              nid in notelib.inhibited_note_ids(db) and cid not in notelib.inhibited_note_ids(db))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": cid, "b": nid})
+        check("and it turns back", code == 200 and (r.get("a"), r.get("b")) == (nid, cid), str(r))
+        op_ids.append(r.get("op_id"))
+
         check("retype with no mode is a 400, not a silent untyping",
               call(f"{base}/api/link/retype", payload={"a": nid, "b": cid})[0] == 400)
         code, r = call(f"{base}/api/link/retype",
@@ -255,8 +268,6 @@ with lib.corpus_guard(db):
         check("retype relabels an existing bind", code == 200 and r.get("mode") == "catalyzes")
         op_ids.append(r.get("op_id"))
 
-        check("a ratified bind cannot be reversed — only a proposal's direction is still open",
-              call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})[0] == 400)
         check("an unknown link action is a 400",
               call(f"{base}/api/link/frobnicate", payload={"a": nid, "b": cid})[0] == 400)
         check("a link with only one endpoint is a 400",

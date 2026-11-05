@@ -16,7 +16,7 @@ bind fires the signed activation wave back along the target's lineage (§12.5).
 
 Subcommands:
   suggest A B [--rationale "…"] [--mode M]   stage BINDS{suggested} A→B   (SUGGEST_LINK ●)
-  reverse A B                                turn a suggested A→B into B→A (REVERSE_LINK ○)
+  reverse A B                                turn A→B into B→A            (REVERSE_LINK ○)
   ratify  A B [--mode M] [--rationale "…"]   ratify it, setting the mode  (RATIFY_LINK ○)
   retype  A B --mode M                       change an existing bind's mode (RETYPE_LINK ○)
   reject  A B                                delete it (un-link)          (REJECT_LINK)
@@ -98,7 +98,7 @@ def main():
     pj.add_argument("a", help="one endpoint id")
     pj.add_argument("b", help="the other endpoint id")
 
-    pv = sub.add_parser("reverse", help="turn a suggested BINDS A→B into B→A")
+    pv = sub.add_parser("reverse", help="turn a BINDS A→B into B→A, keeping its status and mode")
     pv.add_argument("a", help="the note it currently runs from")
     pv.add_argument("b", help="the note it currently runs to")
 

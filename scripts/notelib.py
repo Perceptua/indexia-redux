@@ -1314,8 +1314,8 @@ class LinkManager:
         pair), ValueError for a missing/self/malformed id or an unknown mode.
 
         `mode` defaults to None (untyped, neutral) — that is what the provocation digest
-        stages. Stamps `created_at` (the one and only write of it — the edge's birth
-        instant), which is what ages the suggestion queue for the expiry sweep. Same
+        stages. Stamps `created_at` (the edge's birth instant, which only `reverse` carries
+        over when it re-creates the edge), which is what ages the suggestion queue for the expiry sweep. Same
         'T'-separated format as Note.created_at: space+millis is silently stored as null."""
         self._check(a, b)
         mode = normalize_bind_mode(mode)
@@ -1388,21 +1388,24 @@ class LinkManager:
         return LinkResult("RETYPE_LINK", src, dst, status, new_mode, op_id)
 
     def reverse(self, a, b):
-        """REVERSE_LINK ○ — turn a suggested a→b around so it reads b→a, and log Op(REVERSE_LINK).
+        """REVERSE_LINK ○ — turn a→b around so it reads b→a, and log Op(REVERSE_LINK).
 
-        On an `inhibits` verdict the direction IS the claim (§6), and a proposal's direction is only
-        the machine's guess, so the human gets to set it before deciding. REJECT_LINK then
-        SUGGEST_LINK would also turn it around, but a logged rejection is a standing veto
-        (`rejected_pairs`), and this pair has not been declined.
+        On an `inhibits` verdict the direction IS the claim (§6). A proposal's direction is only
+        the machine's guess, and a ratified one can simply have been decided the wrong way round,
+        so the human can set it at either stage. REJECT_LINK then SUGGEST_LINK would also turn it
+        around, but a logged rejection is a standing veto (`rejected_pairs`), and this pair has not
+        been declined. Status and mode stay as they are, so a ratified `inhibits` still asserts a
+        correction, now of the other note: fitness and "being corrected" are read off the edge when
+        asked (§13), so there is nothing else to update. The rationale carries over unchanged, and
+        may need rewording if it was written with the old direction in mind.
 
         Unlike its neighbours this reads its arguments in order: they name the direction being
         turned away from. A page showing a stale row therefore cannot flip the edge back: if it
-        already reads b→a there is nothing to do, and no Op (§12.3). Only a proposal can turn. A
-        ratified bind is a claim someone made, so changing its direction stays two deliberate acts.
+        already reads b→a there is nothing to do, and no Op (§12.3).
 
         ArcadeDB edges cannot change endpoints, so the edge is re-created in one transaction.
-        `created_at` carries over, because turning a suggestion around is not a reason to give it
-        another month before the expiry sweep, and it reads back in the space-separated form that
+        `created_at` carries over, because turning a bind around does not change when it was drawn
+        or give a suggestion another month before the expiry sweep, and it reads back in the space-separated form that
         would store as null if written straight back (see format_created_at)."""
         row = first_row(self.db.query(
             "SELECT outV().id AS src, inV().id AS dst, status, mode, rationale, created_at "
@@ -1411,10 +1414,6 @@ class LinkManager:
         src, dst, status = row.get("src"), row.get("dst"), row.get("status")
         if not src:
             raise ValueError(f"no BINDS edge between {a} and {b} to reverse")
-        if status != "suggested":
-            raise ValueError(f"the bind between {a} and {b} is {status}, and only a suggestion can "
-                             f"be reversed — to turn a claim around, reject it and suggest it the "
-                             f"other way round")
         mode = row.get("mode")
         if (src, dst) == (b, a):
             return LinkResult("REVERSE_LINK", src, dst, status, mode, None)
@@ -1431,7 +1430,8 @@ class LinkManager:
                 {"a": dst, "b": src, "s": status, "at": born, "m": mode,
                  "r": row.get("rationale")})
             insert_op(self.db, op_id, "REVERSE_LINK", {"a": dst, "b": src, "was_a": src,
-                                                       "was_b": dst})
+                                                       "was_b": dst, "status": status,
+                                                       "mode": mode})
         self.db.atomically(_do)
         return LinkResult("REVERSE_LINK", dst, src, status, mode, op_id)
 

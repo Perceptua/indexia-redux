@@ -130,6 +130,19 @@ function bindActions(edge) {
       <span class="sub-claim muted">no relation after all</span></div>`;
 }
 
+/* Turning a bind around, for the panel of an edge that has been clicked. Deliberately not part of
+ * bindActions: the link panel renders that too, and a ratified claim's direction should change only
+ * from looking at the edge itself. */
+function reverseButton(edge) {
+  if (!on || edge.type !== 'binds') return '';
+  const why = edge.status === 'ratified'
+    ? 'turn this bind around, so the second note comes first — it stays ratified and keeps its type'
+    : 'turn this suggestion around, so the second note comes first — this decides nothing';
+  return `<div class="verdict">${button('reverse', { 'data-a': edge.source, 'data-b': edge.target },
+                                        '⇅ swap', why)}
+    <span class="sub-claim muted">read it the other way round</span></div>`;
+}
+
 const editButton = (noteId) => (on ? `<div class="verdict">${button(
   'edit', { 'data-id': noteId }, 'edit',
   'fix a typo, title, author or source in place — refused if it changes what the body '
@@ -749,13 +762,13 @@ async function resumeWalk() {
 
 // ---- wiring ----------------------------------------------------------------
 /* Ratify and reject appear on the queue, the edge panel and the link panel, and where they land
- * depends on which (swap, for now, only on the queue). That is read at the click, not when the write returns, so a verdict given in
+ * depends on which (swap: the queue and a clicked edge). That is read at the click, not when the write returns, so a verdict given in
  * the queue never turns into a note panel because the reader looked elsewhere in the meantime. */
-function verdict(d, path, payload, said) {
+function verdict(d, path, payload, said, land = (r) => ctx.reselect(r.a || d.a)) {
   const fromQueue = ctx.panelSource() === 'queue';
   return run(() => post(path, payload), async (r) => {
     if (fromQueue) await requeue(d.a, d.b);
-    else ctx.reselect(r.a || d.a);
+    else land(r);
     toast(said(r));
   });
 }
@@ -776,9 +789,11 @@ const ACTIONS = {
    * slots emptying at the moment the bind appeared. */
   suggest: (d) => run(() => post('/api/link/suggest', { a: d.a, b: d.b }),
                       () => { ctx.reselect(d.a); toast('suggested — it is in the queue'); }),
-  // Same landing as a verdict, and the row stays: list() is oldest first and the edge keeps its age.
+  // A queue row stays in the queue, since list() is oldest first and the edge keeps its age. A
+  // clicked edge stays on that edge.
   reverse: (d) => verdict(d, '/api/link/reverse', { a: d.a, b: d.b },
-                          (r) => `now reads ${ctx.labelOf(r.a)} → ${ctx.labelOf(r.b)}`),
+                          (r) => `now reads ${ctx.labelOf(r.a)} → ${ctx.labelOf(r.b)}`,
+                          (r) => ctx.reselectBind(r.a, r.b)),
   // `data-mode` is dropped from the markup when the mode is null (see attrs), so undefined here
   // means untyped — which is a verdict, not an omission, and the server tells the two apart on
   // whether the key is present at all (State.link). Hence the explicit null.
@@ -842,6 +857,7 @@ export const Write = {
   compose,
   suggestButton,
   bindActions,
+  reverseButton,
   editButton,
   composeFrom,
   onSelection,

@@ -15,8 +15,8 @@ Every one of these READS AND NEVER WRITES — no property, no edge, no Op. Run t
 you like; the corpus cannot tell the difference.
 
 `--as-of <note-id-shaped timestamp>` recomputes against the graph as it stood at that instant,
-using created_at on Note, BEGETS and BINDS. Its one limit: BINDS.status has no history, so an
-as-of view uses each surviving edge's current status (see analytics/common.py). `walks`, `walk`
+using created_at on Note, BEGETS and BINDS. Its one limit: BINDS.status and direction have no
+history, so an as-of view uses each surviving edge's current ones (see analytics/common.py). `walks`, `walk`
 and `replay` do not take it — a walk is an Op sequence, and a replay is by definition a question
 about the corpus *now*.
 """

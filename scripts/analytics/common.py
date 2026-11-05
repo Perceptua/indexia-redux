@@ -29,11 +29,12 @@ class Corpus:
     single report — a report that asks five questions should not scan BINDS five times.
 
     `as_of` is a note-id-shaped timestamp (spec §4). Notes created after it, and edges drawn
-    after it, are excluded. One honest limit: BINDS.status has no history, so an as-of view uses
-    each surviving edge's CURRENT status. A bind ratified today but suggested last month counts
-    as ratified in a view of last month, and one rejected since is absent from it entirely.
-    Op(RATIFY_LINK) could recover the true history; v0.8.0 does not attempt it, and every report
-    that accepts --as-of says so.
+    after it, are excluded. One honest limit: BINDS.status and direction have no history, so an
+    as-of view uses each surviving edge's CURRENT status and direction. A bind ratified today but
+    suggested last month counts as ratified in a view of last month, one reversed today reads
+    reversed there too, and one rejected since is absent from it entirely. Op(RATIFY_LINK) and
+    Op(REVERSE_LINK) could recover the true history; nothing attempts it, and every report that
+    accepts --as-of says so.
     """
 
     def __init__(self, db, as_of=None):

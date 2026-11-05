@@ -10,8 +10,9 @@ than the ten newest plus each community's hub, because most eligible pairs were 
 44 left after the first such run could only be found from the wider set. Staging takes at most one pair per note per run,
 because a few notes sit near everything, and the floor drops from 0.75 to 0.70, because only 10 of the
 37 kept binds reach 0.75. A same-author filter was tested and considered, and is not adopted. A pair is offered once, so its
-direction is the machine's guess, and `REVERSE_LINK` lets the human turn a suggestion around before
-deciding it (§7), without the standing veto a rejection would leave. ·
+direction is the machine's guess, and `REVERSE_LINK` lets the human turn a bind around, suggested or
+ratified (§7), without the standing veto a rejection would leave. An as-of view reads the current
+direction as well as the current status (§13). ·
 v0.8.6 **the draft leaves the graph** (§12.7, §12.3). `PROPOSE_VARIANT`,
 `COMMIT_VARIANT` and `REJECT_VARIANT` are **removed**, and with them `Note.status = 'proposed'`.
 They were built and specified, and in 2267 operations nothing ever called them — because the human
@@ -463,12 +464,21 @@ edge with `status = suggested`. Ratification flips it to `status = ratified`; re
 it. This keeps links genuinely emergent and human-owned while letting the machine do the tedious
 recall of *candidate* connections.
 
-**A proposal's direction is the human's to set** *(v0.9.1)*. The machine picks which note comes first
-(the newer one, §8.2), which is a guess, and on an `inhibits` verdict the direction is the claim (§6).
-So a suggestion can be turned around before it is decided (`REVERSE_LINK`, §12.3). That is not a
-rejection: `REJECT_LINK` then `SUGGEST_LINK` would reach the same edge, but would log a standing veto on
-a pair nobody has declined. A ratified bind is a claim, and does not turn; it is rejected and
-suggested again.
+**A bind's direction is the human's to set** *(v0.9.1)*. The machine picks which note comes first (the
+newer one, §8.2), which is a guess, and on an `inhibits` verdict the direction is the claim (§6). So a
+bind can be turned around (`REVERSE_LINK`, §12.3): a suggestion before it is decided, from its row in
+the queue, and a ratified bind if it was decided the wrong way round, from the panel of its clicked edge
+and nowhere else, because changing a claim should come from looking at it. That is not a rejection:
+`REJECT_LINK` then `SUGGEST_LINK` would reach the same edge, but would log a standing veto on a pair
+nobody has declined, and would lose the ratification.
+
+Reversing a ratified bind keeps its status, mode and `created_at`, and carries `rationale` over
+unchanged. It does not breach principle 4 any more than `RETYPE_LINK` does: notes and the `Op` log are
+what never overwrite, a bind is a standing judgement the human may revise, and `Op(REVERSE_LINK)` records
+what it read before. It is also not how a belief changes. Reversing says the claim was stated backwards;
+changing your mind is still a new note and a ratified `inhibits` (§6). Because nothing stores a
+consequence of a bind (§13), fitness and "being corrected" follow the new direction the next time they
+are read: a reversed `inhibits` asserts the correction of the other note.
 
 **Typed only by a human** *(v0.7.0)*. `BINDS.mode` is optional and defaults to null. That is not
 an oversight but the division of labour restated: the machine can see that two notes are near
@@ -968,7 +978,7 @@ trail §11.2 referenced). Machine-permitted rules are marked ●; human-only ○
 |------|-----------|--------|-----|
 | `ADD_NOTE` | `(parent_id?, mode, body, author)` | insert `Note(active)`; if `parent_id`, add `BEGETS{mode}`; embed; log (address is computed lazily, §4) | ○ (human commits) |
 | `SUGGEST_LINK` | `(a, b, rationale, mode?)` | `BINDS{status:suggested, created_at, rationale}`. The machine may only propose **untyped** (§7) | ● |
-| `REVERSE_LINK` | `(a, b)` | turn a `suggested` a→b into b→a, keeping `created_at` and `rationale`; no state changed (already b→a) logs nothing; a ratified bind is refused (§7) | ○ |
+| `REVERSE_LINK` | `(a, b)` | turn a→b into b→a, suggested or ratified, keeping `status`, `mode`, `created_at` and `rationale`; no state changed (already b→a) logs nothing (§7) | ○ |
 | `RATIFY_LINK` | `(edge, mode?)` | set `ratified`, optionally assign `mode` | ○ |
 | `RETYPE_LINK` | `(edge, mode)` | change an existing bind's `mode` | ○ |
 | `REJECT_LINK` | `(edge)` | delete (proposal, not corpus) | either |
@@ -1044,8 +1054,9 @@ WHERE b.mode = 'catalyzes' AND b.status = 'ratified'      RETURN x.id, y.id;
 MATCH (n:Note) WHERE n.created_at <= $t                                    // notes that existed
 MATCH (x:Note)-[e:BEGETS]->(y:Note) WHERE e.created_at <= $t               // lineage drawn by then
 MATCH (a:Note)-[b:BINDS]->(c:Note)  WHERE b.created_at <= $t               // binds staged by then
--- Caveat: BINDS.status carries no history, so an as-of view uses each surviving edge's CURRENT
--- status. Op(RATIFY_LINK) could recover the true history; v0.8.0 does not attempt it (§13).
+-- Caveat: BINDS.status and direction carry no history, so an as-of view uses each surviving edge's
+-- CURRENT status and direction. Op(RATIFY_LINK) and Op(REVERSE_LINK) could recover the true history;
+-- nothing attempts it (§13).
 ```
 
 ### 12.5 The sign, and where it is read
@@ -1268,11 +1279,12 @@ Driven by `scripts/analytics.sh`; `--as-of` where marked.
 Walk reports take no as-of: a walk is an `Op` sequence, and a replay is by definition a question
 about the corpus *now*.
 
-**The as-of caveat, stated plainly.** `BINDS.status` carries no history, so a past view uses each
-surviving edge's *current* status: a bind ratified today counts as ratified in a view of last
-month, and one rejected since is absent from that view entirely. Note membership and edge
-existence are dated exactly. `Op(RATIFY_LINK)` could recover the true status history; v0.8.0 does
-not attempt it, and every report that accepts `--as-of` says so.
+**The as-of caveat, stated plainly.** `BINDS.status` and direction carry no history, so a past view
+uses each surviving edge's *current* status and direction: a bind ratified today counts as ratified in
+a view of last month, one reversed today reads reversed there too *(v0.9.1)*, and one rejected since is
+absent from that view entirely. Note membership and edge existence are dated exactly.
+`Op(RATIFY_LINK)` and `Op(REVERSE_LINK)` could recover the true history; nothing attempts it, and every
+report that accepts `--as-of` says so.
 
 ### 13.4 Where the boundary sits
 
