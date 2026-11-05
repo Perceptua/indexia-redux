@@ -1297,7 +1297,7 @@ class LinkExists(ValueError):
 
 class LinkManager:
     """The BINDS ratification flow (spec §7): SUGGEST_LINK ● (machine proposes), then
-    RATIFY_LINK / RETYPE_LINK / REJECT_LINK ○ (human disposes). Mirrors Ingestor — every
+    REVERSE_LINK / RATIFY_LINK / RETYPE_LINK / REJECT_LINK ○ (human disposes). Mirrors Ingestor — every
     mutation runs in one transaction that also appends its Op (§12.3).
 
     Every method here writes edge properties and nothing else. Ratifying a typed edge is
@@ -1314,8 +1314,8 @@ class LinkManager:
         pair), ValueError for a missing/self/malformed id or an unknown mode.
 
         `mode` defaults to None (untyped, neutral) — that is what the provocation digest
-        stages. Stamps `created_at` (the one and only write of it — the edge's birth
-        instant), which is what ages the suggestion queue for the expiry sweep. Same
+        stages. Stamps `created_at` (the edge's birth instant, which only `reverse` carries
+        over when it re-creates the edge), which is what ages the suggestion queue for the expiry sweep. Same
         'T'-separated format as Note.created_at: space+millis is silently stored as null."""
         self._check(a, b)
         mode = normalize_bind_mode(mode)
@@ -1387,6 +1387,54 @@ class LinkManager:
         self.db.atomically(_do)
         return LinkResult("RETYPE_LINK", src, dst, status, new_mode, op_id)
 
+    def reverse(self, a, b):
+        """REVERSE_LINK ○ — turn a→b around so it reads b→a, and log Op(REVERSE_LINK).
+
+        On an `inhibits` verdict the direction IS the claim (§6). A proposal's direction is only
+        the machine's guess, and a ratified one can simply have been decided the wrong way round,
+        so the human can set it at either stage. REJECT_LINK then SUGGEST_LINK would also turn it
+        around, but a logged rejection is a standing veto (`rejected_pairs`), and this pair has not
+        been declined. Status and mode stay as they are, so a ratified `inhibits` still asserts a
+        correction, now of the other note: fitness and "being corrected" are read off the edge when
+        asked (§13), so there is nothing else to update. The rationale carries over unchanged, and
+        may need rewording if it was written with the old direction in mind.
+
+        Unlike its neighbours this reads its arguments in order: they name the direction being
+        turned away from. A page showing a stale row therefore cannot flip the edge back: if it
+        already reads b→a there is nothing to do, and no Op (§12.3).
+
+        ArcadeDB edges cannot change endpoints, so the edge is re-created in one transaction.
+        `created_at` carries over, because turning a bind around does not change when it was drawn
+        or give a suggestion another month before the expiry sweep, and it reads back in the space-separated form that
+        would store as null if written straight back (see format_created_at)."""
+        row = first_row(self.db.query(
+            "SELECT outV().id AS src, inV().id AS dst, status, mode, rationale, created_at "
+            "FROM BINDS WHERE (outV().id=:a AND inV().id=:b) OR (outV().id=:b AND inV().id=:a)",
+            {"a": a, "b": b}))
+        src, dst, status = row.get("src"), row.get("dst"), row.get("status")
+        if not src:
+            raise ValueError(f"no BINDS edge between {a} and {b} to reverse")
+        mode = row.get("mode")
+        if (src, dst) == (b, a):
+            return LinkResult("REVERSE_LINK", src, dst, status, mode, None)
+        born = row.get("created_at")
+        born = str(born).replace(" ", "T").rstrip("Z") + "Z" if born else None
+        op_id = unique_id(self.db, format_id(now_utc()), "Op")
+        def _do():
+            self.db.command("DELETE FROM BINDS WHERE outV().id=:a AND inV().id=:b",
+                            {"a": src, "b": dst})
+            self.db.command(
+                "CREATE EDGE BINDS FROM (SELECT FROM Note WHERE id=:a) "
+                "TO (SELECT FROM Note WHERE id=:b) "
+                "SET status=:s, created_at=:at, mode=:m, rationale=:r",
+                {"a": dst, "b": src, "s": status, "at": born, "m": mode,
+                 "r": row.get("rationale")})
+            insert_op(self.db, op_id, "REVERSE_LINK", {"a": dst, "b": src, "was_a": src,
+                                                       "was_b": dst, "status": status,
+                                                       "mode": mode})
+        self.db.atomically(_do)
+        return LinkResult("REVERSE_LINK", dst, src, status, mode, op_id)
+
     def reject(self, a, b):
         """REJECT_LINK — delete the a↔b BINDS (a proposal is not corpus, §2.4) and log
         Op(REJECT_LINK). Primarily for `suggested` edges; also un-links a ratified one, in
@@ -1408,7 +1456,7 @@ class LinkManager:
         """BINDS edges with their endpoint ids/titles, optionally filtered by status and/or
         mode (pass mode=None to select only untyped edges). `created_at` is null on edges
         staged before the property existed (see scripts/link_expiry.py — undated edges are
-        never swept)."""
+        never swept). Oldest first, so a row keeps its place when `reverse` re-creates its edge."""
         sql = ("SELECT status, mode, rationale, created_at, outV().id AS a, inV().id AS b, "
                "outV().title AS a_title, inV().title AS b_title FROM BINDS")
         where, params = [], {}
@@ -1422,7 +1470,7 @@ class LinkManager:
                 params["m"] = m
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += f" LIMIT {int(limit)}"
+        sql += f" ORDER BY created_at LIMIT {int(limit)}"
         return rows(self.db.query(sql, params or None))
 
     def _edge(self, a, b):
@@ -1558,7 +1606,12 @@ def expire_suggested_links(db, max_age_days=SUGGESTION_MAX_AGE_DAYS,
 # 0.75 admits 7 — a queue of the few strongest hits instead of a long list to reject. Move
 # past this floor and the *cap* (STAGE_CAP in provocation_digest.py) is what limits how many
 # of those few land per run.
-STAGE_MIN_SCORE = 0.75
+#
+# Lowered to 0.70 in v0.9.1, on 48 notes and the verdicts so far. 0.75 sat above most links the
+# reader actually makes: 10 of the 37 kept binds reach it, and the median hand-made one scores
+# 0.635. Going back to 0.65 would undo the reasoning above, so this is the cautious step, and it is
+# still an experiment: re-check it against the keep rate it inherited (5 of 47 distinct pairs).
+STAGE_MIN_SCORE = 0.70
 
 
 def graph_neighborhood(db, seed_id, depth=2):

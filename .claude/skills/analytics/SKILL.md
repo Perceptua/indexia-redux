@@ -67,9 +67,9 @@ wsl -d ubuntu -- bash -lc 'cd /home/aphorikles/indexia && bash scripts/analytics
 
 - **Ask twice, get two answers.** A community is what the graph looks like now, so ratifying one
   bind can redraw the boundaries. That is correct behaviour, not instability.
-- **`--as-of` has one honest limit.** `BINDS.status` carries no history, so a past view uses each
-  surviving edge's *current* status — a bind ratified today counts as ratified in a view of last
-  month, and one rejected since is absent from that view entirely. Note membership and edge
+- **`--as-of` has one honest limit.** `BINDS.status` and direction carry no history, so a past view
+  uses each surviving edge's *current* status and direction — a bind ratified today counts as ratified
+  in a view of last month, one reversed today reads reversed there too, and one rejected since is absent from that view entirely. Note membership and edge
   existence are dated exactly (`created_at` on `Note`, `BEGETS` and `BINDS`).
 - **Fitness weights are constants, not settings.** They live at the top of
   `scripts/analytics/fitness.py`; changing one changes the next report, with no migration.

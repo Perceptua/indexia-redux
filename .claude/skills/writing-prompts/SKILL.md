@@ -103,8 +103,8 @@ Nothing needs to be dismissed or cleared. The list is recomputed from the graph 
   "less visited" is carrying no weight in practice and the metric is effectively
   `descendants / (1 + binds)`. It starts counting on its own once walks are recorded; no change
   needed.
-- **`--as-of` has one honest limit.** `BINDS.status` carries no history, so a past view uses each
-  surviving edge's *current* status. Note and edge existence are dated exactly.
+- **`--as-of` has one honest limit.** `BINDS.status` and direction carry no history, so a past view
+  uses each surviving edge's *current* status and direction. Note and edge existence are dated exactly.
 - **The constants are constants, not settings.** `MIN_DESCENDANTS` and `K` live at the top of
   `scripts/analytics/debt.py`. There are no weights to tune — that is the point of the ratio.
 - Design rationale: `docs/indexia-prompt-assistant-spec.md`.

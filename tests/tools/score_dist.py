@@ -39,7 +39,7 @@ def report(label, scores, higher_is_better):
 
 def main():
     db = notelib.Arcade()
-    seeds = pd._seeds(db, 10)
+    seeds = pd._seeds(db)
     m1 = []
     for sid in seeds:
         try:

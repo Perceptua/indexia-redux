@@ -133,7 +133,8 @@ async function boot() {
     centerOn: (id) => Graph.centerOn(id),
     toast: Write.toast,
     // The link panel's half of the selection: it names the slots, this file owns what is in them.
-    pick, swapPicks, reselect, bindBetween, begetsBetween, claimOf,
+    pick, swapPicks, reselect, reselectBind, bindBetween, begetsBetween, claimOf, releaseBind,
+    panelSource: () => panelSource,
     // Borrowed from the write surface rather than reimplemented, so the ratify buttons the link
     // panel shows are the SAME markup the queue and the edge panel show, wired the same way.
     suggestButton: Write.suggestButton,
@@ -611,6 +612,24 @@ function highlightEdgeBetween(a, b) {
   return { ok: true, visible: visible.edges.has(e.id) };
 }
 
+/* The other half of highlightEdgeBetween. Once a verdict is in, that bind's row has left the queue,
+ * and a highlight on it would point at nothing — one that could otherwise only be cleared by a
+ * click on the background, which closes the queue too. A selection on anything else is left alone. */
+function releaseBind(a, b) {
+  if (selection.kind === 'edge' && selection.nodes.has(a) && selection.nodes.has(b)) {
+    setSelection(EMPTY());
+  }
+}
+
+/* Where swapping a clicked edge lands: the same bind, under the new id its re-created edge has, so
+ * the panel shows the claim turned around. Only if that edge is still the selection, because the
+ * map stays clickable during a write and the reader may have moved on. */
+function reselectBind(a, b) {
+  if (selection.kind !== 'edge' || !selection.nodes.has(a) || !selection.nodes.has(b)) return;
+  const e = bindBetween(a, b);
+  if (e) selectEdge(e.id);
+}
+
 /* Used by the search panel (ui/search.js) to jump to a hit: exactly the selection a click on the
  * node itself would make, and then centre on it — but WITHOUT opening the note's detail panel,
  * which would swap the results out for the first thing you clicked in them. Same bargain the two
@@ -681,11 +700,14 @@ function fromHash() {
 }
 
 // ---- the detail panel ------------------------------------------------------
+let panelSource = null;
+
 /* Which header button, if any, the pane's current content came from — "+ note"/queue/inbox/status
  * all render into this same #panel, so this is what lets exactly one of them read as pressed, the
  * way the layout and date-window segments already do. A node or edge selected on the graph calls
  * openPanel with no source, which is what clears all four: the pane is showing neither. */
 function setPanelSource(source) {
+  panelSource = source || null;
   document.querySelectorAll('[data-panel-source]').forEach((b) => {
     const active = b.dataset.panelSource === source;
     b.classList.toggle('on', active);
@@ -855,6 +877,7 @@ function showEdge(e) {
     <h2><span class="${pill}">${esc(e.mode || 'untyped')}</span>
       ${e.status ? `<span class="pill">${esc(e.status)}</span>` : ''}</h2>
     <p class="claim">${claimOf(e)}</p>
+    ${Write.reverseButton(e)}
     <dl><dt>drawn</dt><dd>${esc(when)} UTC</dd></dl>
     <div id="d-rationale"></div>
     <h3>from</h3>${noteLink(e.source)}

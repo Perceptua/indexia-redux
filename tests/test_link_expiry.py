@@ -11,6 +11,8 @@ The guards under test:
   * an edge with no `created_at` is counted but never swept;
   * `ratified` edges are corpus and are never touched.
 """
+from datetime import timedelta
+
 import lib
 
 notelib, check = lib.notelib, lib.check
@@ -135,7 +137,7 @@ with lib.corpus_guard(db):
         pd = __import__("provocation_digest")
         for room in (0, 1, 3):
             attempts.clear()
-            res = pd.build(db, seeds_limit=10, k=5, stage=True,
+            res = pd.build(db, k=5, stage=True,
                            max_queue=queued + room, wait=False, use_cache=True)
             want = min(pd.STAGE_CAP, room)
             check(f"with room for {room}, the staging loop stops at {want}",
@@ -144,7 +146,7 @@ with lib.corpus_guard(db):
             check(f"...and room for {room} still renders everything found",
                   res["offered"] > want, f"{res['offered']} eligible")
         attempts.clear()
-        res = pd.build(db, seeds_limit=10, k=5, stage=True, max_queue=queued + 500, wait=False)
+        res = pd.build(db, k=5, stage=True, max_queue=queued + 500, wait=False)
         check("with room to spare the per-run cap is what binds, not the ceiling",
               len(attempts) == pd.STAGE_CAP and res["budget"] == pd.STAGE_CAP,
               f"{len(attempts)} attempt(s), budget {res['budget']}")
@@ -152,6 +154,66 @@ with lib.corpus_guard(db):
         notelib.LinkManager.suggest = real_suggest
     check("the queue is exactly where it was — the ceiling checks staged nothing",
           notelib.suggested_link_count(db) == queued, f"{notelib.suggested_link_count(db)}")
+
+    # --- turning a suggestion around -------------------------------------------------------------
+    # (A ratified bind turns the same way; test_ui_write.py covers what it does to the claim.)
+    # REVERSE_LINK has to leave everything but the direction alone. The two easy ways to get that
+    # wrong are both quiet: a re-created edge that loses its age, because created_at reads back in a
+    # form that stores as null, or one that jumps to the end of the queue under the reader's pointer.
+    lm = notelib.LinkManager(db)
+
+    def edge_row(x, y):
+        return notelib.first_row(db.query(
+            "SELECT created_at, rationale, status, mode FROM BINDS "
+            "WHERE outV().id = :a AND inV().id = :b", {"a": x, "b": y}))
+
+    def queue_order():
+        return [frozenset((e["a"], e["b"])) for e in lm.list(status="suggested", limit=500)]
+
+    with lib.synthetic_links(db, 3) as made:
+        for days, (p, q) in zip((45, 44, 43), made):     # distinct, so the order is the dates'
+            db.command("UPDATE BINDS SET created_at = :at WHERE outV().id = :a AND inV().id = :b",
+                       {"at": notelib.format_created_at(notelib.now_utc() - timedelta(days=days)),
+                        "a": p, "b": q})
+        x, y = made[0]
+        before, order = edge_row(x, y), queue_order()
+        declined = notelib.rejected_pairs(db)
+        moved = False
+        try:
+            r = lm.reverse(x, y)
+            moved = True
+            after = edge_row(y, x)
+            check("reverse stores the edge the other way round and reports it",
+                  (r.a, r.b) == (y, x) and after.get("status") == "suggested"
+                  and not edge_row(x, y).get("status"), str(r))
+            check("the suggestion keeps its age, so the expiry sweep is not reset",
+                  after.get("created_at") == before.get("created_at")
+                  and notelib.age_in_days(after.get("created_at")) >= 44,
+                  f"{before.get('created_at')} -> {after.get('created_at')}")
+            check("and its rationale", after.get("rationale") == before.get("rationale"),
+                  str(after.get("rationale")))
+            check("it holds its place in the queue", queue_order() == order)
+            check("turning a suggestion around is not a rejection: the pair is not vetoed",
+                  notelib.rejected_pairs(db) == declined)
+            ops = notelib.first_row(db.query("SELECT count(*) AS n FROM Op")).get("n")
+            again = lm.reverse(x, y)
+            check("repeating it from a stale page is a no-op with no Op",
+                  again.op_id is None and (again.a, again.b) == (y, x)
+                  and notelib.first_row(db.query("SELECT count(*) AS n FROM Op")).get("n") == ops,
+                  str(again))
+            lib.undate(db, [(y, x)])
+            lm.reverse(y, x)
+            moved = False
+            check("an undated edge stays undated, so it stays exempt from the sweep",
+                  not edge_row(x, y).get("created_at") and edge_row(x, y).get("status") == "suggested")
+        finally:
+            if moved:
+                lm.reverse(y, x)
+    try:
+        lm.reverse(made[0][0], made[0][1])
+        check("reversing an edge that does not exist is refused", False)
+    except ValueError as err:
+        check("reversing an edge that does not exist is refused", "no BINDS edge" in str(err))
 
     # --- the shipped constants -----------------------------------------------------------------
     check("SUGGESTION_MAX_AGE_DAYS is a positive number of days",

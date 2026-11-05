@@ -219,6 +219,20 @@ with lib.corpus_guard(db):
         check("a second bind on the same pair is a 409 — one relation per pair, either way round",
               call(f"{base}/api/link/suggest", payload={"a": cid, "b": nid})[0] == 409)
 
+        # ---- turning a suggestion around (REVERSE_LINK, spec §7) -------------
+        code, r = call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})
+        check("reverse turns a suggestion around and reports the new direction",
+              code == 200 and r.get("a") == cid and r.get("b") == nid
+              and r.get("status") == "suggested", str(r))
+        op_ids.append(r.get("op_id"))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})
+        check("repeating it from a stale page changes nothing and logs nothing",
+              code == 200 and r.get("a") == cid and r.get("op_id") is None, str(r))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": cid, "b": nid})
+        check("and it turns back the same way",
+              code == 200 and r.get("a") == nid and r.get("b") == cid, str(r))
+        op_ids.append(r.get("op_id"))
+
         code, r = call(f"{base}/api/link/ratify", payload={"a": cid, "b": nid})
         check("ratify resolves the edge either way round and reports the stored direction, "
               "because with inhibits the direction IS the claim (§6)",
@@ -232,6 +246,19 @@ with lib.corpus_guard(db):
                        payload={"a": nid, "b": cid, "mode": "inhibits"})
         check("ratify can assign the mode in the same act",
               code == 200 and r.get("mode") == "inhibits", str(r.get("mode")))
+        op_ids.append(r.get("op_id"))
+
+        check("while it reads new→old, the second note is the one being corrected",
+              cid in notelib.inhibited_note_ids(db) and nid not in notelib.inhibited_note_ids(db))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": nid, "b": cid})
+        check("a ratified bind can be turned around, and stays ratified with its type",
+              code == 200 and (r.get("a"), r.get("b")) == (cid, nid)
+              and r.get("status") == "ratified" and r.get("mode") == "inhibits", str(r))
+        op_ids.append(r.get("op_id"))
+        check("the correction now falls on the other note, with nothing else to update (§13)",
+              nid in notelib.inhibited_note_ids(db) and cid not in notelib.inhibited_note_ids(db))
+        code, r = call(f"{base}/api/link/reverse", payload={"a": cid, "b": nid})
+        check("and it turns back", code == 200 and (r.get("a"), r.get("b")) == (nid, cid), str(r))
         op_ids.append(r.get("op_id"))
 
         check("retype with no mode is a 400, not a silent untyping",

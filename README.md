@@ -359,12 +359,13 @@ Associative links (`BINDS`) are the emergent, human-ratified graph (spec §7) �
 `BEGETS` lineage that `add-note --parent` builds. The machine only ever **proposes** a link; you
 **ratify** or **reject** it (the "communication partner, not compiler" boundary, §8.2).
 
-**Ratification flow — `scripts/link.sh`** (and the underlying `SUGGEST_LINK ● / RATIFY_LINK ○ / REJECT_LINK`
-rules, §12.3):
+**Ratification flow — `scripts/link.sh`** (and the underlying `SUGGEST_LINK ● / REVERSE_LINK ○ / RATIFY_LINK ○ /
+REJECT_LINK` rules, §12.3):
 
 ```bash
 bash scripts/link.sh suggest <a> <b> --rationale "both about emergence"   # stage a suggested bind a→b
 bash scripts/link.sh list --status suggested                              # review pending proposals
+bash scripts/link.sh reverse <a> <b>                                      # turn a→b into b→a, suggested or ratified
 bash scripts/link.sh ratify <a> <b> --mode catalyzes                      # accept it, and say how
 bash scripts/link.sh retype <a> <b> --mode inhibits                       # change your mind later
 bash scripts/link.sh reject <a> <b>                                       # delete it (a proposal isn't corpus, §2.4)
@@ -407,8 +408,8 @@ nobody decides. So three limits hold the queue at human size:
 
 - the digest **stages nothing once 50 suggestions are already standing** (`--max-queue`). This is
   the one that actually bounds it, and it binds from the first run;
-- the digest **stages at most 5 per run** and only above a similarity floor (it still *renders*
-  everything it found — see [Maintenance loop](#maintenance-loop));
+- the digest **stages at most 5 per run**, at most 1 per note, and only above a similarity floor (it
+  still *renders* everything it found — see [Maintenance loop](#maintenance-loop));
 - `scripts/link-expiry.sh` **sweeps `suggested` edges older than 30 days**, weekly. Unratified for a
   month counts as implicitly declined.
 
@@ -567,10 +568,10 @@ the nightly digest, and on demand by `analytics.sh debt` (skill: `writing-prompt
 `docs/indexia-prompt-assistant-spec.md`).
 
 **`--as-of <timestamp>`** recomputes against the graph as it stood at that instant, using `created_at`
-on `Note`, `BEGETS` and `BINDS`. One honest limit: `BINDS.status` carries no history, so a past view
-uses each surviving edge's *current* status — a bind ratified today counts as ratified in a view of last
-month, and one rejected since is absent from that view entirely. Note membership and edge existence are
-dated exactly.
+on `Note`, `BEGETS` and `BINDS`. One honest limit: `BINDS.status` and direction carry no history, so a
+past view uses each surviving edge's *current* status and direction — a bind ratified today counts as
+ratified in a view of last month, one reversed today reads reversed there too, and one rejected since is
+absent from that view entirely. Note membership and edge existence are dated exactly.
 
 ## Graph UI
 
@@ -698,10 +699,9 @@ to reorder on a whim. The tooltip says which case you are in, because they are i
 reasons.
 
 With a **`BINDS`** it is inert outright: the panel renders from the edge's **stored** direction, so
-reordering two labels would change nothing while appearing to. Turning it around for real is
-`REJECT_LINK` then `SUGGEST_LINK` the other way — two `Op`s, one of which deletes a proposal — and
-that is not something a hinge between two slots should do quietly. The tooltip points at the
-`reject` sitting directly below it; reject, and the swap frees up with both notes still in place.
+reordering two labels would change nothing while appearing to. A suggestion turns around from its row
+in `queue`, and a ratified bind from its own panel once you click the edge on the map (both
+`REVERSE_LINK`). The tooltip names whichever applies.
 
 With a **`BEGETS`** flipping *would* change what gets proposed, and that is precisely why it should
 not be one click. Lineage cannot be reversed, so a bind against its grain is an assertion about a
@@ -734,7 +734,13 @@ one bind in one direction (§7) — said in the panel rather than earned as a 40
   front of you — and it proposes just as narrowly.
 - **`queue`** is the ratification queue: every suggested bind with its claim written out, and the
   four verdicts (`RATIFY_LINK` as catalyzes / corrects / untyped, or `REJECT_LINK`). The machine
-  proposes and the human disposes (§8.2), and that split is exactly what the two buttons are.
+  proposes and the human disposes (§8.2), and that split is exactly what the two buttons are. Beside
+  them, **⇅ swap** turns a suggestion around (`REVERSE_LINK`) so the claim reads the way you mean it,
+  without deciding anything, keeping its place in the list and its age in the expiry sweep. A ratified
+  bind has the same button, shown only when you click its edge on the map: it stays ratified and keeps
+  its type, so a `corrects` bind then asserts the correction of the other note. A
+  verdict leaves the queue open, with the decided row gone and your place in the list kept; the
+  sections below the binds (moves 2–6) catch up the next time the queue is opened.
 - **`edit`** fixes a typo, title, author, or source in place (`CORRECT_COSMETIC`) — the corpus's
   one in-place mutation *(title/author/source_ref since v0.8.7)*. A `clean` button below the body
   strips newline-type characters from it in the editor, on demand only — nothing is sanitized on
@@ -988,9 +994,10 @@ bash scripts/resurface.sh                   # weekly re-encounter digest (Op RES
 bash scripts/link-expiry.sh --dry-run       # what the suggestion sweep would delete (Op EXPIRE_LINKS)
 ```
 
-**Staging is capped, rendering is not.** `provocation-digest` lists every candidate it found but stages
-only the strongest **5 per run** (`--stage-cap`), above a move-1 similarity floor of **0.75**
-(`--min-score`), and only while fewer than **50** suggestions are already awaiting a decision
+**Staging is capped, rendering is not.** `provocation-digest` looks outward from **every embedded note**
+(`--seeds N` narrows that to the N newest plus each community's hub), lists every candidate it found, but
+stages only the strongest **5 per run** (`--stage-cap`), at most **1 per note**, above a move-1 similarity
+floor of **0.70** (`--min-score`), and only while fewer than **50** suggestions are already awaiting a decision
 (`--max-queue` — see [Links & provocations](#links--provocations) for why a per-run cap alone does
 not bound a queue). Moves 1 and 2 score on opposite axes — move 1's score is similarity (higher is nearer),
 move 2's is the same cosine read as distance (lower means further apart, which is what makes a note you
@@ -1067,7 +1074,7 @@ SELECT FROM Op WHERE rule = 'RATIFY_LINK' ORDER BY id DESC; -- inspect a rule's 
 ```
 
 The rule grammar, as built: `ADD_NOTE`, `EMBED`, `CORRECT_COSMETIC`,
-`SUGGEST_LINK`/`RATIFY_LINK`/`RETYPE_LINK`/`REJECT_LINK`/`EXPIRE_LINKS`,
+`SUGGEST_LINK`/`REVERSE_LINK`/`RATIFY_LINK`/`RETYPE_LINK`/`REJECT_LINK`/`EXPIRE_LINKS`,
 `START_WALK`/`VISIT`/`PRODUCE`/`SAVE_WALK`/`FORK_WALK`/`DELETE_WALK`,
 `PROVOKE_DIGEST`, `RESURFACE`, `KNN_CACHE`, `PROMOTE_TYPE`, `BACKFILL_LINK_DATES`,
 `MIGRATE_V0_8_0`. (`seed-binds.sh` has no rule of its own — it replays a manifest as real
@@ -1243,7 +1250,7 @@ What remains is only **deliberate deferrals** and **post-v1 aspirations**.
 - **Autocatalysis & the criticality band are descriptive-only** — the `autocatalytic` flag and the per-community/corpus criticality figures gate no behaviour, and criticality is *observed* rather than regulated (§11.3): the report names the band, you decide what to do about it.
 - **Communities are detected, never ratified** *(v0.8.0)* — there is no `Cluster` node to accept or name. If a theme deserves a name, write a hub note and bind it to the members.
 - **Working-set→product catalysis is not a fitness term** *(v0.8.0)* — `Op(PRODUCE)` still records it, so promoting it back is a report change, not a schema change.
-- **`--as-of` uses each edge's current `BINDS.status`** — edge existence and note membership are dated exactly, but ratification history is not reconstructed (recoverable from `Op(RATIFY_LINK)` if it ever matters).
+- **`--as-of` uses each edge's current `BINDS.status` and direction** — edge existence and note membership are dated exactly, but ratification and reversal history are not reconstructed (recoverable from `Op(RATIFY_LINK)` and `Op(REVERSE_LINK)` if it ever matters).
 - **Embedding model** defaults to `mxbai-embed-large` (1024-dim); the final MTEB pick is left open (swappable via config).
 
 **Post-v1 aspirations** — the §11 "living computer" layer, beyond the build order:

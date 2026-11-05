@@ -141,7 +141,7 @@ with lib.corpus_guard(db), lib.knn_cache_guard(db):
 
     notelib.semantic_search = counting_search
     try:
-        seeds = pd._seeds(db, 10)
+        seeds = pd._seeds(db)
         shortest = None
         for sid in seeds:
             pairs = notelib.knn_cached_neighbors(db, sid)
@@ -163,7 +163,7 @@ with lib.corpus_guard(db), lib.knn_cache_guard(db):
 
         # --- the headline invariant: a whole digest pass touches no vectors -------------------
         live_calls.clear()
-        res = pd.build(db, seeds_limit=10, k=5, stage=False, wait=False)
+        res = pd.build(db, k=5, stage=False, wait=False)
         check("a full six-move digest pass issues zero live vector queries",
               not live_calls, f"{len(live_calls)} query(ies)"
               + (f" k={live_calls}" if live_calls else "")

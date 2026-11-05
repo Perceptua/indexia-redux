@@ -12,8 +12,8 @@
 
 const MODES = [
   ['catalyzes', 'catalyzes', 'A feeds B: it enables, extends or supports it'],
-  ['inhibits', 'corrects', 'A corrects B. The direction IS the claim (§6) — if that is '
-    + 'backwards, reject it and suggest it the other way round'],
+  ['inhibits', 'corrects', 'A corrects B. The direction IS the claim (§6), so check it reads '
+    + 'the right way round first'],
   [null, 'untyped', 'related, with no verdict either way'],
 ];
 
@@ -68,7 +68,7 @@ async function envelope(work, done, after) {
   try {
     const result = await work();
     if (after) await after();
-    if (done) done(result);
+    if (done) await done(result);
   } catch (err) {
     toast(err.message, 'bad');
     if (err.status === 422) driftRemedy(err.data);
@@ -128,6 +128,19 @@ function bindActions(edge) {
     <div class="verdict">${button('reject', { 'data-a': edge.source, 'data-b': edge.target },
                                   'reject', 'delete the bind — a proposal is not corpus (§2.4)')}
       <span class="sub-claim muted">no relation after all</span></div>`;
+}
+
+/* Turning a bind around, for the panel of an edge that has been clicked. Deliberately not part of
+ * bindActions: the link panel renders that too, and a ratified claim's direction should change only
+ * from looking at the edge itself. */
+function reverseButton(edge) {
+  if (!on || edge.type !== 'binds') return '';
+  const why = edge.status === 'ratified'
+    ? 'turn this bind around, so the second note comes first — it stays ratified and keeps its type'
+    : 'turn this suggestion around, so the second note comes first — this decides nothing';
+  return `<div class="verdict">${button('reverse', { 'data-a': edge.source, 'data-b': edge.target },
+                                        '⇅ swap', why)}
+    <span class="sub-claim muted">read it the other way round</span></div>`;
 }
 
 const editButton = (noteId) => (on ? `<div class="verdict">${button(
@@ -376,19 +389,49 @@ function revisitRows(m5) {
     + bucket('on this day', m5.on_this_day);
 }
 
+let queueProv = null;   // the moves 2-6 the queue last read; see requeue
+
 async function queue() {
   const [linkRes, provRes] = await Promise.all([
     fetch('/api/links?status=suggested'), fetch('/api/provocations'),
   ]);
   const data = linkRes.ok ? await linkRes.json() : { links: [] };
-  const prov = provRes.ok ? await provRes.json() : null;
+  queueProv = provRes.ok ? await provRes.json() : null;
+  paintQueue(data.links);
+}
+
+/* A verdict given in the queue lands back in the queue, with the decided row gone and the next one
+ * sliding up under the pointer — hence the scroll position kept across the repaint.
+ *
+ * Only the binds are re-read. A write empties the server's provocation cache and rebuilding it
+ * takes seconds under the same lock every other route waits on, which is a stall per verdict in
+ * the middle of working down a list. So moves 2-6 stay as last read until the queue is next
+ * opened: they are prompts rather than decisions, and nothing in them can be acted on twice.
+ *
+ * The reader may have gone elsewhere while the write ran, and is not pulled back. */
+async function requeue(a, b) {
+  ctx.releaseBind(a, b);
+  const res = await fetch('/api/links?status=suggested');
+  if (!res.ok) throw new Error('the verdict landed, but the queue could not be re-read — reopen it');
+  const { links } = await res.json();
+  if (ctx.panelSource() !== 'queue') return;
+  const pane = document.querySelector('#panel');
+  const top = pane.scrollTop;
+  paintQueue(links);
+  pane.scrollTop = top;
+}
+
+function paintQueue(links) {
+  const prov = queueProv;
   const label = (id, title) => ctx.esc(title || ctx.labelOf(id));
-  const rows = data.links.map((l) => `<div class="qrow">
+  const rows = links.map((l) => `<div class="qrow">
     <button type="button" class="claim link" data-a="${ctx.esc(l.a)}" data-b="${ctx.esc(l.b)}"
       title="show these two notes in the graph">${label(l.a, l.a_title)}
       <span class="muted">→</span> ${label(l.b, l.b_title)}</button>
     ${l.rationale ? `<p class="rationale">${ctx.esc(l.rationale)}</p>` : ''}
     <div class="verdict">
+      ${button('reverse', { 'data-a': l.a, 'data-b': l.b }, '⇅ swap',
+               'turn this suggestion around, so the second note comes first — this decides nothing')}
       ${MODES.map(([mode, verb, why]) => button(
         'ratify', { 'data-a': l.a, 'data-b': l.b, 'data-mode': mode }, verb, why)).join('')}
       ${button('reject', { 'data-a': l.a, 'data-b': l.b }, 'reject')}
@@ -402,7 +445,7 @@ async function queue() {
   ctx.openPanel(`
     <button type="button" class="close" title="Close (Esc)">×</button>
     <div class="kind">ratification queue</div>
-    <h2>${data.links.length} suggested bind${data.links.length === 1 ? '' : 's'}</h2>
+    <h2>${links.length} suggested bind${links.length === 1 ? '' : 's'}</h2>
     <p class="hint">near-but-graph-far suggestions (move 1) await a verdict below; bridge
       candidates (move 2) are read-only until you suggest one yourself</p>
     ${rows.length ? rows.join('') : ''}${bridgeBlock}
@@ -718,6 +761,18 @@ async function resumeWalk() {
 }
 
 // ---- wiring ----------------------------------------------------------------
+/* Ratify and reject appear on the queue, the edge panel and the link panel, and where they land
+ * depends on which (swap: the queue and a clicked edge). That is read at the click, not when the write returns, so a verdict given in
+ * the queue never turns into a note panel because the reader looked elsewhere in the meantime. */
+function verdict(d, path, payload, said, land = (r) => ctx.reselect(r.a || d.a)) {
+  const fromQueue = ctx.panelSource() === 'queue';
+  return run(() => post(path, payload), async (r) => {
+    if (fromQueue) await requeue(d.a, d.b);
+    else land(r);
+    toast(said(r));
+  });
+}
+
 const ACTIONS = {
   compose: (d) => compose({ parent: d.parent, mode: d.mode, corrects: d.corrects }),
   edit: (d) => edit(d.id),
@@ -727,23 +782,29 @@ const ACTIONS = {
   queue: () => queue(),
   staging: () => staging(),
   link: () => ctx.openLink(),
-  /* All four land through `ctx.reselect` rather than selecting an endpoint outright. Everywhere
-   * but the link panel that is the same thing it always was — the note, reselected against the
-   * corpus the write just re-read. In the link panel it is the difference between the pair
-   * surviving its own verdict and one of its slots emptying at the moment the bind appeared. */
+  /* All of these land through `ctx.reselect` rather than selecting an endpoint outright (the
+   * queue's verdicts excepted — see `verdict`). Everywhere but the link panel that is the same
+   * thing it always was — the note, reselected against the corpus the write just re-read. In the
+   * link panel it is the difference between the pair surviving its own verdict and one of its
+   * slots emptying at the moment the bind appeared. */
   suggest: (d) => run(() => post('/api/link/suggest', { a: d.a, b: d.b }),
                       () => { ctx.reselect(d.a); toast('suggested — it is in the queue'); }),
+  // A queue row stays in the queue, since list() is oldest first and the edge keeps its age. A
+  // clicked edge stays on that edge.
+  reverse: (d) => verdict(d, '/api/link/reverse', { a: d.a, b: d.b },
+                          (r) => `now reads ${ctx.labelOf(r.a)} → ${ctx.labelOf(r.b)}`,
+                          (r) => ctx.reselectBind(r.a, r.b)),
   // `data-mode` is dropped from the markup when the mode is null (see attrs), so undefined here
   // means untyped — which is a verdict, not an omission, and the server tells the two apart on
   // whether the key is present at all (State.link). Hence the explicit null.
-  ratify: (d) => run(
-    () => post('/api/link/ratify', { a: d.a, b: d.b, mode: d.mode === undefined ? null : d.mode }),
-    (r) => { ctx.reselect(r.a); toast(`ratified as ${r.mode || 'untyped'}`); }),
+  ratify: (d) => verdict(
+    d, '/api/link/ratify', { a: d.a, b: d.b, mode: d.mode === undefined ? null : d.mode },
+    (r) => `ratified as ${r.mode || 'untyped'}`),
   retype: (d) => run(
     () => post('/api/link/retype', { a: d.a, b: d.b, mode: d.mode === undefined ? null : d.mode }),
     (r) => { ctx.reselect(r.a); toast(`now reads as ${r.mode || 'untyped'}`); }),
-  reject: (d) => run(() => post('/api/link/reject', { a: d.a, b: d.b }),
-                     () => { ctx.reselect(d.a); toast('rejected — the bind is gone'); }),
+  reject: (d) => verdict(
+    d, '/api/link/reject', { a: d.a, b: d.b }, () => 'rejected — the bind is gone'),
   ingest: (d) => run(
     () => post('/api/staging/ingest', d.name ? { names: [d.name] } : {}),
     (r) => {
@@ -796,6 +857,7 @@ export const Write = {
   compose,
   suggestButton,
   bindActions,
+  reverseButton,
   editButton,
   composeFrom,
   onSelection,
