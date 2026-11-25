@@ -21,7 +21,7 @@ TESTS = os.path.dirname(os.path.abspath(__file__))
 # pure unit test and runs anywhere, which is why --unit is worth having as a fast pre-flight.
 NEEDS_DB = {"test_knn_cache.py", "test_link_expiry.py", "test_search_dates.py",
             "test_db_invariants.py", "test_analytics_readonly.py", "test_walk_ops.py",
-            "test_ui_readonly.py", "test_ui_write.py"}
+            "test_ui_readonly.py", "test_ui_write.py", "test_vector_reindex.py"}
 
 
 def discover():

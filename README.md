@@ -148,6 +148,7 @@ Each capability has a fuller how-to below: [Ingestion](#ingestion) · [Embedding
 | `drop-db.sh <db>` | Drop a scratch/restored database; refuses to touch the live one. |
 | `console.sh` | Interactive ArcadeDB SQL console. |
 | `smoke-test.sh` | End-to-end check: insert + `vector.neighbors` + `BEGETS` traversal (self-cleaning). |
+| `vector-reindex.sh [--status]` | Drop and recreate the `LSM_VECTOR` index from the stored embeddings, clearing the deleted vectors that make every server start rebuild the ANN graph from scratch. Hot backup first; `--status` reads only. See [Embedding](#embedding). |
 | `add-note.sh` | Ingest one note (workflow 1); also `--correct` (in-place fix to body and/or title/author/source_ref). See Ingestion. |
 | `ingest-staging.sh [--dry-run]` | Ingest id-named files dropped in `staging/` (workflow 2). |
 | `transcribe-scans.sh [scan]` | Workflow 3 from the shell: opens an interactive `claude` session straight into the `transcribe-notes` skill, over everything waiting in `staging/scans/` or one named scan; ratified notes land in `staging/`. Runs with `--permission-mode bypassPermissions`. See Ingestion and the `staging/scans/` drop zone under [Graph UI](#graph-ui). |
@@ -903,6 +904,15 @@ bash scripts/embed-worker.sh start    # the background embedder (status | stop)
   `INDEXIA_EMBED_ON_COMMIT` (`async`|`sync`), `OLLAMA_HOST`, `OLLAMA_KEEP_ALIVE`.
 - Changing the model/dimension means changing `INDEXIA_EMBED_DIM` **and** the `LSM_VECTOR` index
   dimension in `ddl/schema.sql` (spec §10, the one tuning knob), then re-embedding.
+- **Slow starts mean deleted vectors.** Every re-embed (a `--correct`, an `EMBED` retry, a backfill)
+  leaves the note's old vector in the index as a *deleted* entry, and ArcadeDB never compacts them.
+  On start it sees any deleted entry and rebuilds the whole ANN graph from scratch. With 631 deleted
+  against 56 live, that took ~4 minutes at full CPU, and the UI's queue panel hung until it was done.
+  Restarting only starts the rebuild over. `scripts/logs.sh | grep 'Deleted vectors'` shows the
+  counts. `bash scripts/vector-reindex.sh` (`make vector-reindex`) fixes it: it waits for the embed
+  queue, takes a hot backup, drops and recreates the index from the statement in `ddl/schema.sql`
+  (nothing is re-embedded), pays the one ANN build up front, and logs `Op(REINDEX_VECTOR)`. Semantic
+  search waits on the vector-query lock while it runs.
 
 ## Maintenance loop
 
@@ -1059,6 +1069,7 @@ Day-to-day operation and looking under the hood.
 | Follow logs | `bash scripts/logs.sh [N]` — last `N` lines of the server log (default 100) |
 | Interactive SQL | `bash scripts/console.sh` — an ArcadeDB SQL prompt against `indexia` |
 | End-to-end self-test | `bash scripts/smoke-test.sh` — insert + `vector.neighbors` + traversal, self-cleaning |
+| Slow start / UI hangs after a restart | `bash scripts/vector-reindex.sh` — compacts the vector index; see [Embedding](#embedding) |
 | Regression tests | `bash tests/run.sh` — see [Tests](#tests) |
 | Re-apply schema | `bash scripts/apply-ddl.sh` — idempotent; run after editing `ddl/schema.sql` |
 | Mint note ids | `bash scripts/new-id.sh [N]` — N fresh spec §4 ids (used by transcribe-notes, review-transcripts) |
@@ -1076,7 +1087,7 @@ SELECT FROM Op WHERE rule = 'RATIFY_LINK' ORDER BY id DESC; -- inspect a rule's 
 The rule grammar, as built: `ADD_NOTE`, `EMBED`, `CORRECT_COSMETIC`,
 `SUGGEST_LINK`/`REVERSE_LINK`/`RATIFY_LINK`/`RETYPE_LINK`/`REJECT_LINK`/`EXPIRE_LINKS`,
 `START_WALK`/`VISIT`/`PRODUCE`/`SAVE_WALK`/`FORK_WALK`/`DELETE_WALK`,
-`PROVOKE_DIGEST`, `RESURFACE`, `KNN_CACHE`, `PROMOTE_TYPE`, `BACKFILL_LINK_DATES`,
+`PROVOKE_DIGEST`, `RESURFACE`, `KNN_CACHE`, `REINDEX_VECTOR`, `PROMOTE_TYPE`, `BACKFILL_LINK_DATES`,
 `MIGRATE_V0_8_0`. (`seed-binds.sh` has no rule of its own — it replays a manifest as real
 `SUGGEST_LINK` + `RATIFY_LINK` pairs.)
 
@@ -1113,7 +1124,9 @@ Two checks verify the cache's live fallback by issuing a real vector query, whic
 rebuilds the whole graph first (~10 min) — so a full run is either ~20s or ~8min depending on the
 index's state. `INDEXIA_TESTS_FAST=1` skips exactly those two and keeps everything else.
 
-**They run against the live corpus** — there is no fixture database. That is deliberate (every bug
+**They run against the live corpus** — there is no fixture database (one exception:
+[`test_vector_reindex.py`](tests/test_vector_reindex.py) builds and drops a throwaway database,
+because recreating the live index costs a full ANN rebuild). That is deliberate (every bug
 they exist to catch was found *because* the corpus was real and densely linked), which makes cleanup a
 safety property: `tests/lib.py` provides `corpus_guard()`, which fails a test whose
 `Note`/`BEGETS`/`BINDS` counts don't match afterwards, and `synthetic_links()`, which plants real suggested
