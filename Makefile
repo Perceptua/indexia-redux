@@ -33,7 +33,7 @@ TARGET ?=
 	jobs knn-cache provocation-digest resurface link-expiry recent-notes embed-backfill \
 	reports report fitness debt criticality communities autocatalysis visited walks \
 	add-note ingest-staging search walk link provoke \
-	backup restore drop-db console apply-ddl smoke-test \
+	backup restore drop-db console apply-ddl smoke-test vector-reindex \
 	setup-ollama gen-env gen-cert new-id promote-type seed-binds \
 	backfill-link-dates migrate-v0-8-0 transcribe-scans \
 	test test-fast test-unit
@@ -216,6 +216,9 @@ apply-ddl: ## Create DB if absent + apply ddl/schema.sql (idempotent)
 
 smoke-test: ## End-to-end smoke test (self-cleaning SMOKE-* rows)
 	bash scripts/smoke-test.sh
+
+vector-reindex: ## Drop + recreate the LSM_VECTOR index (compacts deleted vectors; backup first)
+	bash scripts/vector-reindex.sh $(ARGS)
 
 ##@ Setup & one-time migrations
 

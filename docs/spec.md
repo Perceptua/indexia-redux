@@ -994,6 +994,7 @@ trail §11.2 referenced). Machine-permitted rules are marked ●; human-only ○
 | Embedding (§7) | `EMBED` |
 | Seeding (§7) | *(no rule of its own)* — `seed-binds.sh` replays an associative layer from a manifest after a rebuild by issuing a real `SUGGEST_LINK` + `RATIFY_LINK` per row, so nothing is back-dated and the log reads as though the links were made by hand |
 | Scheduled jobs (§12.6) | `PROVOKE_DIGEST`, `RESURFACE`, `KNN_CACHE`, `EXPIRE_LINKS` |
+| Index maintenance (§12.1) | `REINDEX_VECTOR` — drop and recreate the `LSM_VECTOR` index from the stored `Note.embedding` values, which clears the deleted entries re-embeds leave behind (they force a full ANN rebuild on every server start). Derived data only, the corpus is untouched |
 | Walk lifecycle (§3.3, §11.1, §13) | `START_WALK`, `VISIT`, `PRODUCE`, `SAVE_WALK`, `FORK_WALK`, `DELETE_WALK` |
 | Migrations | `BACKFILL_LINK_DATES`, `MIGRATE_V0_8_0` |
 
