@@ -229,6 +229,25 @@ with lib.corpus_guard(db):
         check("move 5's buckets are always present, even empty",
               {"orphans", "inhibited", "on_this_day"} <= set(prov["move5"]))
 
+        # The panel must never reach the vector index, cache miss or not. Any note embedded since
+        # the nightly knn-cache has no cache row, and move 3 used to answer that with a live query.
+        # On an invalidated graph that query rebuilds the whole ANN graph first, which hung the
+        # queue for minutes. So: every cache lookup misses, and any live query raises.
+        def no_live(*a, **kw):
+            raise AssertionError("the queue panel issued a live vector query")
+        saved = notelib.knn_cached_neighbors, notelib.semantic_search
+        notelib.knn_cached_neighbors = lambda db_, note_id: None
+        notelib.semantic_search = no_live
+        try:
+            cold = ui.State(db, writable=False).provocations()
+            check("provocations stays off the vector index even when every cache lookup misses",
+                  "move3" in cold and cold["move3"] == [], json.dumps(cold.get("move3"))[:200])
+        except AssertionError as e:
+            check("provocations stays off the vector index even when every cache lookup misses",
+                  False, str(e))
+        finally:
+            notelib.knn_cached_neighbors, notelib.semantic_search = saved
+
         # A dry run reads the directory, parses it, and asks the DB which ids exist. It must not
         # commit, embed, or move a file — the Op check at the bottom is what proves the first.
         code, body = get(f"{base}/api/staging")

@@ -555,6 +555,7 @@ class State:
         self.cache = {}
         self.status_cache = None         # (monotonic, payload) — its own slot; see status()
         self.provocations_cache = None   # (monotonic, payload) — its own slot; see provocations()
+        self.provocations_lock = threading.Lock()   # and its own lock, same docstring
         self.writable = writable
         # The seam Ingestor already exposes. A test passes None, so driving the routes needs no
         # Ollama — and leaves no stray vector to invalidate the ANN index (tests/test_ui_write.py).
@@ -634,8 +635,19 @@ class State:
 
         Cached like `status()` for the same reason: it is a panel a reader reopens, not a page
         load, and move 3 in particular asks the k-NN cache up to `sample` times.
+
+        **Cache only, never the vector index** (`live=False`). A note embedded since the nightly
+        knn-cache has no cache row, and move 3's default fallback would answer it with a live
+        query, which rebuilds the whole ANN graph first. Observed: the queue panel hung ~4 min the
+        first time it opened after a note was written. So a note too new for the cache sits out
+        move 3 until the next knn-cache run.
+
+        **Its own lock, not `self.lock`.** The queue fetches /api/links alongside this, and the
+        binds are the half a reader came for: a few seconds of whole-corpus scans here must not
+        hold the bind list. Two threads reading at once is safe because the read client never
+        opens a transaction session (see the class docstring).
         """
-        with self.lock:
+        with self.provocations_lock:
             hit = self.provocations_cache
             if hit and not refresh and time.monotonic() - hit[0] < self.ttl:
                 return hit[1]
@@ -645,7 +657,7 @@ class State:
                 r["prompt"] = debt.prompt(r)
             payload = {
                 "move2": notelib.move2_candidates(self.db, k=PROVOKE_SHOW),
-                "move3": notelib.move3_candidates(self.db, k=PROVOKE_SHOW),
+                "move3": notelib.move3_candidates(self.db, k=PROVOKE_SHOW, live=False),
                 "move4": notelib.move4_candidates(self.db, k=PROVOKE_SHOW),
                 "move5": notelib.move5_candidates(self.db),
                 "move6": move6,
