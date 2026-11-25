@@ -1059,7 +1059,7 @@ def knn_cached_neighbors(db, note_id):
             if isinstance(p, (list, tuple)) and len(p) == 2 and p[0]]
 
 
-def neighbors_of(db, note_id, k=5, ef=100, exclude_ids=(), use_cache=True):
+def neighbors_of(db, note_id, k=5, ef=100, exclude_ids=(), use_cache=True, live=True):
     """Nearest notes to an already-embedded note — the read path the provocation moves share.
 
     Serves from KnnCache when it can, hydrating titles/bodies from Note so the rendered text is
@@ -1075,7 +1075,13 @@ def neighbors_of(db, note_id, k=5, ef=100, exclude_ids=(), use_cache=True):
     heavily-linked seed drags the entire nightly run through a full ANN rebuild — measured, when
     an earlier version fell back on `len(kept) < k` and turned an 8-second digest into 654
     seconds. Three provocations now beat five in eleven minutes. When the cached list is *shorter*
-    than KNN_CACHE_K it is the complete neighbour set anyway, so even an empty result is exact."""
+    than KNN_CACHE_K it is the complete neighbour set anyway, so even an empty result is exact.
+
+    `live=False` closes the fallback entirely: a cache miss answers [] instead of querying. That
+    is for callers behind a click (the UI's queue panel), where the fallback is not slow but a
+    hang. Any note embedded since the nightly rebuild has no cache row, and the one vector query
+    it would trigger rebuilds the whole ANN graph first (minutes, holding the panel's lock). A
+    note too new for the cache shows up after the next knn-cache run."""
     exclude = set(exclude_ids)
     if use_cache:
         pairs = knn_cached_neighbors(db, note_id)
@@ -1092,6 +1098,8 @@ def neighbors_of(db, note_id, k=5, ef=100, exclude_ids=(), use_cache=True):
                                  "body": n.get("body"), "snippet": snippet(n.get("body")),
                                  "score": round(sc, 6)})
                 return hits
+    if not live:
+        return []
     vec = note_embedding(db, note_id)
     if vec is None:
         if not note_exists(db, note_id):
@@ -1706,7 +1714,8 @@ def move2_candidates(db, k=5, min_size=None):
     return out
 
 
-def move3_candidates(db, k=5, theme_score=0.55, min_theme=None, sample=50, use_cache=True):
+def move3_candidates(db, k=5, theme_score=0.55, min_theme=None, sample=50, use_cache=True,
+                     live=True):
     """Move 3 (§8.1): implicit themes — a tight semantic neighbourhood with no hub note holding
     it together: an unnamed theme running through the notes → a prompt to write one. The machine
     surfaces the theme; the human names it (never auto-authored).
@@ -1718,7 +1727,8 @@ def move3_candidates(db, k=5, theme_score=0.55, min_theme=None, sample=50, use_c
     decide what the human never has to look at (§8.2).
 
     Asks for neighbours up to `sample` times, so it is the digest's heaviest vector consumer —
-    it reads the k-NN cache by default (`use_cache=False` forces live queries)."""
+    it reads the k-NN cache by default (`use_cache=False` forces live queries). `live=False`
+    never queries at all: a seed with no cache row is skipped (see `neighbors_of`)."""
     if min_theme is None:
         min_theme = COMMUNITY_MIN_SIZE                # resolved at call time (defined below)
     seeds = [r.get("id") for r in rows(db.query(
@@ -1729,7 +1739,8 @@ def move3_candidates(db, k=5, theme_score=0.55, min_theme=None, sample=50, use_c
         if sid in used:
             continue
         try:
-            near = neighbors_of(db, sid, k=k + 1, exclude_ids={sid}, use_cache=use_cache)
+            near = neighbors_of(db, sid, k=k + 1, exclude_ids={sid}, use_cache=use_cache,
+                                live=live)
         except ValueError:
             continue                          # seed lost its embedding mid-scan — skip it
         neigh = [c for c in near if c["score"] >= theme_score]

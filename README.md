@@ -741,7 +741,11 @@ one bind in one direction (§7) — said in the panel rather than earned as a 40
   bind has the same button, shown only when you click its edge on the map: it stays ratified and keeps
   its type, so a `corrects` bind then asserts the correction of the other note. A
   verdict leaves the queue open, with the decided row gone and your place in the list kept; the
-  sections below the binds (moves 2–6) catch up the next time the queue is opened.
+  sections below the binds (moves 2–6) catch up the next time the queue is opened. Those sections
+  read only the k-NN cache, never the vector index, so a note written since the last `knn-cache`
+  run sits out move 3 until the next one. Asking the index instead would make the first open
+  after you write a note wait out a full ANN rebuild (minutes). The binds don't wait on those
+  sections either.
 - **`edit`** fixes a typo, title, author, or source in place (`CORRECT_COSMETIC`) — the corpus's
   one in-place mutation *(title/author/source_ref since v0.8.7)*. A `clean` button below the body
   strips newline-type characters from it in the editor, on demand only — nothing is sanitized on
